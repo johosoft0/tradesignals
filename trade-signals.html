@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trade Signals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root {
+  --bg: #0a0e17;
+  --bg2: #111827;
+  --bg3: #1a2235;
+  --bg4: #243049;
+  --border: #2a3550;
+  --text: #e2e8f0;
+  --text2: #94a3b8;
+  --text3: #64748b;
+  --green: #22c55e;
+  --green-bg: rgba(34,197,94,0.08);
+  --green-glow: rgba(34,197,94,0.25);
+  --red: #ef4444;
+  --red-bg: rgba(239,68,68,0.08);
+  --red-glow: rgba(239,68,68,0.25);
+  --amber: #f59e0b;
+  --amber-bg: rgba(245,158,11,0.08);
+  --amber-glow: rgba(245,158,11,0.25);
+  --blue: #3b82f6;
+  --blue-bg: rgba(59,130,246,0.08);
+  --font: 'Outfit', sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+html{background:var(--bg);color:var(--text);font-family:var(--font);}
+body{min-height:100vh;padding:20px 16px 60px;}
+
+/* ── HEADER ── */
+.header{max-width:1400px;margin:0 auto 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
+.logo{font-size:1.6rem;font-weight:800;letter-spacing:-0.03em;background:linear-gradient(135deg,var(--green),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.logo span{font-weight:400;opacity:0.7;}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:12px;}
+.api-input{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:0.78rem;width:220px;outline:none;transition:border-color 0.2s;}
+.api-input:focus{border-color:var(--blue);}
+.api-input::placeholder{color:var(--text3);}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0;}
+.status-dot.live{background:var(--green);box-shadow:0 0 8px var(--green-glow);}
+
+/* ── WATCHLIST BAR ── */
+.watchlist-bar{max-width:1400px;margin:0 auto 24px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.add-form{display:flex;gap:6px;}
+.sym-input{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:0.85rem;width:110px;text-transform:uppercase;outline:none;}
+.sym-input:focus{border-color:var(--blue);}
+.btn{padding:8px 16px;border-radius:8px;border:none;font-family:var(--font);font-weight:600;font-size:0.82rem;cursor:pointer;transition:all 0.15s;}
+.btn-add{background:var(--blue);color:#fff;}
+.btn-add:hover{filter:brightness(1.15);}
+.btn-sm{padding:4px 10px;font-size:0.75rem;background:var(--bg3);color:var(--text2);border:1px solid var(--border);}
+.btn-sm:hover{background:var(--bg4);color:var(--text);}
+.btn-refresh{background:var(--bg3);color:var(--text2);border:1px solid var(--border);}
+.btn-refresh:hover{background:var(--bg4);color:var(--text);}
+.presets{display:flex;gap:6px;flex-wrap:wrap;}
+.preset-btn{padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--text2);font-size:0.75rem;font-weight:500;cursor:pointer;transition:all 0.15s;}
+.preset-btn:hover{background:var(--bg3);color:var(--text);}
+
+.divider{width:1px;height:24px;background:var(--border);margin:0 4px;}
+
+/* ── GRID ── */
+.grid{max-width:1400px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;}
+
+/* ── CARD ── */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:visible;transition:border-color 0.3s,box-shadow 0.3s;position:relative;}
+.card.buy{border-color:rgba(34,197,94,0.35);box-shadow:0 0 20px rgba(34,197,94,0.06);}
+.card.sell{border-color:rgba(239,68,68,0.35);box-shadow:0 0 20px rgba(239,68,68,0.06);}
+.card.wait{border-color:rgba(245,158,11,0.25);}
+.card-head{padding:16px 18px 12px;display:flex;align-items:flex-start;justify-content:space-between;}
+.card-sym{font-family:var(--mono);font-size:1.25rem;font-weight:700;letter-spacing:0.02em;}
+.card-price{font-family:var(--mono);font-size:1.1rem;font-weight:500;color:var(--text2);}
+.card-change{font-size:0.82rem;font-weight:600;}
+.card-change.up{color:var(--green);}
+.card-change.down{color:var(--red);}
+.card-remove{background:none;border:none;color:var(--text3);cursor:pointer;font-size:1rem;padding:2px 6px;border-radius:4px;}
+.card-remove:hover{color:var(--red);background:var(--red-bg);}
+.card-refresh{background:none;border:none;color:var(--text3);cursor:pointer;font-size:0.9rem;padding:2px 6px;border-radius:4px;transition:all 0.15s;}
+.card-refresh:hover{color:var(--blue);background:var(--blue-bg);}
+.card-refresh.spinning{animation:spin 0.8s linear infinite;pointer-events:none;color:var(--blue);}
+.card-actions{display:flex;gap:2px;align-items:center;}
+
+/* Signal badge */
+.signal-row{padding:0 18px 14px;display:flex;align-items:center;gap:12px;}
+.signal-badge{padding:6px 18px;border-radius:8px;font-weight:700;font-size:0.95rem;letter-spacing:0.05em;text-transform:uppercase;}
+.signal-badge.buy{background:var(--green-bg);color:var(--green);border:1px solid rgba(34,197,94,0.25);}
+.signal-badge.sell{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,0.25);}
+.signal-badge.wait{background:var(--amber-bg);color:var(--amber);border:1px solid rgba(245,158,11,0.25);}
+.confidence{font-family:var(--mono);font-size:0.85rem;color:var(--text2);}
+.confidence strong{color:var(--text);}
+
+/* Reasons */
+.reasons{padding:0 18px 16px;display:flex;flex-direction:column;gap:6px;}
+.reason{display:flex;align-items:flex-start;gap:8px;font-size:0.82rem;color:var(--text2);line-height:1.4;}
+.reason-icon{flex-shrink:0;margin-top:2px;font-size:0.7rem;}
+.reason-icon.bull{color:var(--green);}
+.reason-icon.bear{color:var(--red);}
+.reason-icon.neutral{color:var(--amber);}
+
+/* Metrics row */
+.metrics{padding:0 18px 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.metric{background:var(--bg3);border-radius:8px;padding:8px 10px;position:relative;cursor:help;}
+.metric-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:2px;}
+.metric-val{font-family:var(--mono);font-size:0.85rem;font-weight:600;}
+.metric-val.bull{color:var(--green);}
+.metric-val.bear{color:var(--red);}
+.metric-val.neutral{color:var(--amber);}
+
+/* Tooltip */
+.tip{position:absolute;background:#1e293b;color:var(--text);font-size:0.72rem;padding:8px 12px;border-radius:8px;white-space:normal;width:220px;line-height:1.45;pointer-events:none;opacity:0;transition:opacity 0.2s;z-index:1000;border:1px solid var(--border);box-shadow:0 8px 24px rgba(0,0,0,0.5);font-family:var(--font);font-weight:400;}
+.tip::after{content:'';position:absolute;border:6px solid transparent;}
+/* Default: above */
+.tip.pos-above{bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);}
+.tip.pos-above::after{top:100%;left:50%;transform:translateX(-50%);border-top-color:#1e293b;}
+/* Below */
+.tip.pos-below{top:calc(100% + 8px);left:50%;transform:translateX(-50%);}
+.tip.pos-below::after{bottom:100%;left:50%;transform:translateX(-50%);border-bottom-color:#1e293b;}
+/* Left-align when near right edge */
+.tip.align-left{left:0;transform:none;}
+.tip.align-left::after{left:16px;transform:none;}
+/* Right-align when near left edge */
+.tip.align-right{left:auto;right:0;transform:none;}
+.tip.align-right::after{left:auto;right:16px;transform:none;}
+.metric:hover .tip{opacity:1;}
+
+/* Sector ref */
+.sector-ref{padding:0 18px 14px;font-size:0.75rem;color:var(--text3);display:flex;align-items:center;gap:6px;}
+.sector-ref .dot{width:6px;height:6px;border-radius:50%;}
+.sector-ref .dot.up{background:var(--green);}
+.sector-ref .dot.down{background:var(--red);}
+
+/* Blocker bar */
+.blocker{margin:0 18px 14px;padding:10px 14px;background:var(--amber-bg);border:1px solid rgba(245,158,11,0.2);border-radius:8px;font-size:0.78rem;color:var(--amber);display:flex;align-items:flex-start;gap:8px;line-height:1.4;}
+.blocker-icon{font-size:0.9rem;flex-shrink:0;}
+
+/* Loading */
+.card-loading{padding:30px 18px;display:flex;flex-direction:column;align-items:center;gap:12px;color:var(--text3);font-size:0.85rem;}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 0.8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.card-error{padding:20px 18px;color:var(--red);font-size:0.82rem;text-align:center;}
+
+/* Timestamp */
+.timestamp{padding:0 18px 14px;font-size:0.68rem;color:var(--text3);font-family:var(--mono);}
+
+/* Symbol Info Bar */
+.sym-info{padding:0 18px 12px;}
+.sym-info-name{font-size:0.8rem;color:var(--text2);font-weight:500;margin-bottom:4px;}
+.sym-info-tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;}
+.sym-tag{font-size:0.65rem;padding:2px 8px;border-radius:4px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;font-family:var(--mono);}
+.sym-tag.letf{background:rgba(59,130,246,0.12);color:var(--blue);border:1px solid rgba(59,130,246,0.2);}
+.sym-tag.ietf{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,0.2);}
+.sym-tag.etf{background:rgba(139,92,246,0.1);color:#a78bfa;border:1px solid rgba(139,92,246,0.2);}
+.sym-tag.stock{background:rgba(34,197,94,0.08);color:var(--green);border:1px solid rgba(34,197,94,0.2);}
+.sym-tag.sector{background:rgba(245,158,11,0.08);color:var(--amber);border:1px solid rgba(245,158,11,0.2);}
+.sym-tag.leverage{background:rgba(236,72,153,0.1);color:#f472b6;border:1px solid rgba(236,72,153,0.2);}
+.sym-tag.direction-bull{background:rgba(34,197,94,0.08);color:var(--green);border:1px solid rgba(34,197,94,0.2);}
+.sym-tag.direction-bear{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,0.2);}
+.sym-info-desc{font-size:0.73rem;color:var(--text3);line-height:1.45;}
+.sym-info-underlying{margin-top:5px;font-size:0.72rem;color:var(--text3);display:flex;align-items:center;gap:5px;}
+.sym-info-underlying strong{color:var(--text2);}
+
+/* Responsive */
+@media(max-width:480px){
+  .grid{grid-template-columns:1fr;}
+  .header{flex-direction:column;align-items:flex-start;}
+  .header-right{margin-left:0;width:100%;}
+  .api-input{width:100%;}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">TradeSignals <span>/ live</span></div>
+  <div class="header-right">
+    <div class="status-dot" id="statusDot" title="Connection status"></div>
+    <input type="password" class="api-input" id="apiKey" placeholder="Finnhub API key" autocomplete="off">
+  </div>
+</div>
+
+<div class="watchlist-bar">
+  <div class="add-form">
+    <input type="text" class="sym-input" id="symInput" placeholder="AAPL" maxlength="10">
+    <button class="btn btn-add" onclick="addSymbol()">Add</button>
+    <button class="btn btn-refresh" onclick="refreshAll()">↻ Refresh All</button>
+    <button class="btn btn-sm" onclick="clearAll()" style="color:var(--red);">Clear All</button>
+  </div>
+  <div class="divider"></div>
+  <div class="presets">
+    <button class="preset-btn" onclick="loadPreset('leveraged')">Leveraged ETFs</button>
+    <button class="preset-btn" onclick="loadPreset('inverse')">Inverse ETFs</button>
+    <button class="preset-btn" onclick="loadPreset('pairs')">Bull/Bear Pairs</button>
+    <button class="preset-btn" onclick="loadPreset('tech')">Big Tech</button>
+    <button class="preset-btn" onclick="loadPreset('semis')">Semiconductors</button>
+    <button class="preset-btn" onclick="loadPreset('sector')">Sector ETFs</button>
+    <button class="preset-btn" onclick="loadPreset('crypto')">Crypto</button>
+    <button class="preset-btn" onclick="loadPreset('defense')">Defense</button>
+    <button class="preset-btn" onclick="loadPreset('energy')">Energy</button>
+    <button class="preset-btn" onclick="loadPreset('gold')">Gold</button>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════
+const PRESETS = {
+  leveraged: ['TQQQ','SOXL','UPRO','SPXL','TNA','LABU','FAS','NUGT'],
+  tech: ['AAPL','MSFT','NVDA','GOOGL','AMZN','META','TSLA','AMD'],
+  sector: ['SPY','QQQ','SOXX','XLF','XLE','XLV','GLD','TLT'],
+  inverse: ['SQQQ','SOXS','SPXS','TZA','LABD','FAZ','DUST','SDOW'],
+  semis: ['NVDA','AMD','AVGO','QCOM','MU','INTC','MRVL','SOXL','SOXS','SOXX'],
+  crypto: ['IBIT','BITO','MSTR','COIN','MARA','RIOT','CLSK'],
+  defense: ['LMT','RTX','NOC','GD','BA','KTOS','ITA'],
+  energy: ['XOM','CVX','COP','XLE','ERX','ERY'],
+  gold: ['GLD','GDX','NEM','GOLD','NUGT','DUST'],
+  pairs: ['TQQQ','SQQQ','SOXL','SOXS','UPRO','SPXS','TNA','TZA','LABU','LABD'],
+};
+
+// Index/sector reference map — what each symbol should be benchmarked against
+const SECTOR_MAP = {
+  // Leveraged / Inverse → their index
+  TQQQ:'QQQ', SQQQ:'QQQ', QLD:'QQQ', PSQ:'QQQ',
+  SOXL:'SOXX', SOXS:'SOXX',
+  UPRO:'SPY', SPXU:'SPY', SPXL:'SPY', SPXS:'SPY', SH:'SPY',
+  SDOW:'DIA', UDOW:'DIA',
+  TNA:'IWM', TZA:'IWM',
+  LABU:'XBI', LABD:'XBI',
+  FAS:'XLF', FAZ:'XLF',
+  NUGT:'GLD', DUST:'GLD', JNUG:'GDX', JDST:'GDX',
+  ERX:'XLE', ERY:'XLE',
+  TECL:'XLK', TECS:'XLK',
+  CURE:'XLV',
+  // Big tech → QQQ
+  AAPL:'QQQ', MSFT:'QQQ', NVDA:'QQQ', GOOGL:'QQQ', GOOG:'QQQ',
+  AMZN:'QQQ', META:'QQQ', TSLA:'QQQ', AMD:'SOXX', AVGO:'SOXX',
+  MU:'SOXX', INTC:'SOXX', QCOM:'SOXX', MRVL:'SOXX', LRCX:'SOXX',
+  AMAT:'SOXX', KLAC:'SOXX', ON:'SOXX', MCHP:'SOXX',
+  // Crypto-linked
+  MSTR:'BTC-USD', COIN:'BTC-USD', MARA:'BTC-USD', RIOT:'BTC-USD', CLSK:'BTC-USD',
+  BITF:'BTC-USD', HUT:'BTC-USD', IBIT:'BTC-USD', BITO:'BTC-USD',
+  // Miners → gold
+  NEM:'GLD', GOLD:'GLD', AEM:'GLD', KGC:'GLD', FNV:'GLD',
+  // Energy
+  XOM:'XLE', CVX:'XLE', COP:'XLE', SLB:'XLE', OXY:'XLE',
+  // Defense
+  LMT:'ITA', RTX:'ITA', NOC:'ITA', GD:'ITA', BA:'ITA', KTOS:'ITA',
+  // Airlines
+  DAL:'JETS', UAL:'JETS', LUV:'JETS', AAL:'JETS',
+  // Default
+  SPY:'SPY', QQQ:'QQQ', DIA:'DIA', IWM:'IWM'
+};
+
+const IS_INVERSE = new Set(['SQQQ','SOXS','SPXU','SPXS','SH','SDOW','TZA','LABD','FAZ','DUST','JDST','ERY','TECS','PSQ']);
+
+// ═══════════════════════════════════════════════════════════════
+// SYMBOL INFO DATABASE
+// type: stock | etf | letf (leveraged ETF) | ietf (inverse ETF)
+// leverage: multiplier (1 for normal, 2/3 for leveraged)
+// underlying: the index/ETF it tracks
+// ═══════════════════════════════════════════════════════════════
+const SYMBOL_INFO = {
+  // ── Leveraged Bull ETFs ──
+  TQQQ: { name:'ProShares UltraPro QQQ', type:'letf', leverage:3, direction:'bull', underlying:'QQQ', sector:'Tech/Growth', desc:'3x daily return of the Nasdaq-100. Magnifies gains AND losses by 3.' },
+  SOXL: { name:'Direxion Daily Semiconductor Bull 3X', type:'letf', leverage:3, direction:'bull', underlying:'SOXX', sector:'Semiconductors', desc:'3x daily return of the semiconductor index (SOXX). Tracks chips like NVDA, AMD, AVGO.' },
+  UPRO: { name:'ProShares UltraPro S&P 500', type:'letf', leverage:3, direction:'bull', underlying:'SPY', sector:'Broad Market', desc:'3x daily return of the S&P 500. Broad market leverage.' },
+  SPXL: { name:'Direxion Daily S&P 500 Bull 3X', type:'letf', leverage:3, direction:'bull', underlying:'SPY', sector:'Broad Market', desc:'3x daily return of the S&P 500. Same as UPRO, different issuer.' },
+  TNA:  { name:'Direxion Daily Small Cap Bull 3X', type:'letf', leverage:3, direction:'bull', underlying:'IWM', sector:'Small Cap', desc:'3x daily return of the Russell 2000 small-cap index.' },
+  LABU: { name:'Direxion Daily S&P Biotech Bull 3X', type:'letf', leverage:3, direction:'bull', underlying:'XBI', sector:'Biotech', desc:'3x daily return of the S&P Biotech index. Very volatile.' },
+  FAS:  { name:'Direxion Daily Financial Bull 3X', type:'letf', leverage:3, direction:'bull', underlying:'XLF', sector:'Financials', desc:'3x daily return of financial sector stocks (banks, insurance, etc.).' },
+  NUGT: { name:'Direxion Daily Gold Miners Bull 2X', type:'letf', leverage:2, direction:'bull', underlying:'GDX', sector:'Gold Miners', desc:'2x daily return of gold mining stocks. Tracks GDX, moves with gold price.' },
+  ERX:  { name:'Direxion Daily Energy Bull 2X', type:'letf', leverage:2, direction:'bull', underlying:'XLE', sector:'Energy', desc:'2x daily return of the energy sector. Oil companies, pipelines.' },
+  TECL: { name:'Direxion Daily Technology Bull 3X', type:'letf', leverage:3, direction:'bull', underlying:'XLK', sector:'Technology', desc:'3x daily return of the tech sector ETF.' },
+  UDOW: { name:'ProShares UltraPro Dow30', type:'letf', leverage:3, direction:'bull', underlying:'DIA', sector:'Blue Chip', desc:'3x daily return of the Dow Jones Industrial Average.' },
+  QLD:  { name:'ProShares Ultra QQQ', type:'letf', leverage:2, direction:'bull', underlying:'QQQ', sector:'Tech/Growth', desc:'2x daily return of the Nasdaq-100. Less aggressive than TQQQ.' },
+  JNUG: { name:'Direxion Daily Junior Gold Miners Bull 2X', type:'letf', leverage:2, direction:'bull', underlying:'GDXJ', sector:'Junior Gold Miners', desc:'2x daily return of junior gold mining stocks.' },
+  CURE: { name:'Direxion Daily Healthcare Bull 3X', type:'letf', leverage:3, direction:'bull', underlying:'XLV', sector:'Healthcare', desc:'3x daily return of the healthcare sector.' },
+
+  // ── Inverse ETFs ──
+  SQQQ: { name:'ProShares UltraPro Short QQQ', type:'ietf', leverage:3, direction:'bear', underlying:'QQQ', sector:'Tech/Growth', desc:'3x INVERSE daily return of Nasdaq-100. Goes UP when QQQ goes DOWN.' },
+  SOXS: { name:'Direxion Daily Semiconductor Bear 3X', type:'ietf', leverage:3, direction:'bear', underlying:'SOXX', sector:'Semiconductors', desc:'3x INVERSE daily return of semiconductors. Goes UP when SOXX/chips go DOWN.' },
+  SPXU: { name:'ProShares UltraPro Short S&P 500', type:'ietf', leverage:3, direction:'bear', underlying:'SPY', sector:'Broad Market', desc:'3x INVERSE daily return of S&P 500. Goes UP when SPY goes DOWN.' },
+  SPXS: { name:'Direxion Daily S&P 500 Bear 3X', type:'ietf', leverage:3, direction:'bear', underlying:'SPY', sector:'Broad Market', desc:'3x INVERSE daily return of S&P 500. Same as SPXU, different issuer.' },
+  SH:   { name:'ProShares Short S&P 500', type:'ietf', leverage:1, direction:'bear', underlying:'SPY', sector:'Broad Market', desc:'1x INVERSE daily return of S&P 500. Simple hedge, no leverage.' },
+  SDOW: { name:'ProShares UltraPro Short Dow30', type:'ietf', leverage:3, direction:'bear', underlying:'DIA', sector:'Blue Chip', desc:'3x INVERSE daily return of the Dow.' },
+  TZA:  { name:'Direxion Daily Small Cap Bear 3X', type:'ietf', leverage:3, direction:'bear', underlying:'IWM', sector:'Small Cap', desc:'3x INVERSE daily return of Russell 2000. Goes UP when small caps go DOWN.' },
+  LABD: { name:'Direxion Daily S&P Biotech Bear 3X', type:'ietf', leverage:3, direction:'bear', underlying:'XBI', sector:'Biotech', desc:'3x INVERSE daily return of biotech. Goes UP when XBI goes DOWN.' },
+  FAZ:  { name:'Direxion Daily Financial Bear 3X', type:'ietf', leverage:3, direction:'bear', underlying:'XLF', sector:'Financials', desc:'3x INVERSE daily return of financials. Goes UP when banks go DOWN.' },
+  DUST: { name:'Direxion Daily Gold Miners Bear 2X', type:'ietf', leverage:2, direction:'bear', underlying:'GDX', sector:'Gold Miners', desc:'2x INVERSE daily return of gold miners. Goes UP when gold/miners go DOWN.' },
+  JDST: { name:'Direxion Daily Junior Gold Miners Bear 2X', type:'ietf', leverage:2, direction:'bear', underlying:'GDXJ', sector:'Junior Gold Miners', desc:'2x INVERSE daily return of junior gold miners.' },
+  ERY:  { name:'Direxion Daily Energy Bear 2X', type:'ietf', leverage:2, direction:'bear', underlying:'XLE', sector:'Energy', desc:'2x INVERSE daily return of energy sector.' },
+  TECS: { name:'Direxion Daily Technology Bear 3X', type:'ietf', leverage:3, direction:'bear', underlying:'XLK', sector:'Technology', desc:'3x INVERSE daily return of tech sector.' },
+  PSQ:  { name:'ProShares Short QQQ', type:'ietf', leverage:1, direction:'bear', underlying:'QQQ', sector:'Tech/Growth', desc:'1x INVERSE daily return of Nasdaq-100. Simple hedge, no leverage.' },
+
+  // ── Index / Sector ETFs ──
+  SPY:  { name:'SPDR S&P 500 ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Broad Market', desc:'Tracks the S&P 500 — the 500 largest US companies. THE benchmark.' },
+  QQQ:  { name:'Invesco QQQ Trust', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Tech/Growth', desc:'Tracks the Nasdaq-100 — top 100 non-financial Nasdaq stocks. Tech-heavy.' },
+  DIA:  { name:'SPDR Dow Jones ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Blue Chip', desc:'Tracks the Dow Jones Industrial Average — 30 blue-chip stocks.' },
+  IWM:  { name:'iShares Russell 2000 ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Small Cap', desc:'Tracks 2000 small-cap US stocks. More volatile than SPY, domestic-focused.' },
+  SOXX: { name:'iShares Semiconductor ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Semiconductors', desc:'Top semiconductor companies — NVDA, AMD, AVGO, QCOM, etc.' },
+  SMH:  { name:'VanEck Semiconductor ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Semiconductors', desc:'Another major semiconductor ETF. Very similar to SOXX.' },
+  XLF:  { name:'Financial Select Sector SPDR', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Financials', desc:'Big banks and financial companies — JPM, BAC, GS, etc.' },
+  XLE:  { name:'Energy Select Sector SPDR', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Energy', desc:'Oil and gas companies — XOM, CVX, COP, etc.' },
+  XLV:  { name:'Health Care Select Sector SPDR', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Healthcare', desc:'Healthcare giants — UNH, JNJ, LLY, ABBV, etc.' },
+  XLK:  { name:'Technology Select Sector SPDR', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Technology', desc:'Tech sector — AAPL, MSFT, NVDA, etc.' },
+  XBI:  { name:'SPDR S&P Biotech ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Biotech', desc:'Equal-weight biotech stocks. Volatile, binary events (FDA approvals).' },
+  GLD:  { name:'SPDR Gold Shares', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Gold', desc:'Tracks the price of physical gold. Safe haven / inflation hedge.' },
+  GDX:  { name:'VanEck Gold Miners ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Gold Miners', desc:'Gold mining companies. Moves with gold but with more leverage naturally.' },
+  GDXJ: { name:'VanEck Junior Gold Miners ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Junior Gold Miners', desc:'Smaller gold mining companies. Even more volatile than GDX.' },
+  TLT:  { name:'iShares 20+ Year Treasury Bond ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Bonds', desc:'Long-term US treasury bonds. Goes up when interest rates fall.' },
+  ITA:  { name:'iShares US Aerospace & Defense ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Defense', desc:'Defense and aerospace companies — LMT, RTX, NOC, GD.' },
+  JETS: { name:'US Global Jets ETF', type:'etf', leverage:1, direction:'bull', underlying:null, sector:'Airlines', desc:'Airline stocks — DAL, UAL, LUV, etc.' },
+  IBIT: { name:'iShares Bitcoin Trust ETF', type:'etf', leverage:1, direction:'bull', underlying:'BTC-USD', sector:'Crypto', desc:'Spot Bitcoin ETF. Tracks BTC price directly.' },
+  BITO: { name:'ProShares Bitcoin Strategy ETF', type:'etf', leverage:1, direction:'bull', underlying:'BTC-USD', sector:'Crypto', desc:'Bitcoin futures ETF. Tracks BTC but with futures roll costs.' },
+
+  // ── Big Tech Stocks ──
+  AAPL: { name:'Apple Inc.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Tech/Consumer', desc:'iPhones, Macs, services. Largest company by market cap.' },
+  MSFT: { name:'Microsoft Corp.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Tech/Cloud', desc:'Windows, Azure cloud, Office, AI (OpenAI partnership).' },
+  NVDA: { name:'NVIDIA Corp.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Semiconductors', desc:'Dominant AI/GPU chipmaker. Drives SOXX. The AI trade bellwether.' },
+  GOOGL:{ name:'Alphabet Inc. (Google)', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Tech/Advertising', desc:'Google search, YouTube, cloud, Waymo. Ad revenue giant.' },
+  AMZN: { name:'Amazon.com Inc.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Tech/E-Commerce', desc:'E-commerce, AWS cloud (profit engine), advertising.' },
+  META: { name:'Meta Platforms Inc.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Tech/Social', desc:'Facebook, Instagram, WhatsApp, Reality Labs/VR.' },
+  TSLA: { name:'Tesla Inc.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'EV/Tech', desc:'Electric vehicles, energy storage, robotics. Very high volatility.' },
+  AMD:  { name:'Advanced Micro Devices', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Semiconductors', desc:'CPUs and GPUs competing with Intel and NVIDIA. SOXX component.' },
+
+  // ── Crypto-linked Stocks ──
+  MSTR: { name:'MicroStrategy Inc.', type:'stock', leverage:1, direction:'bull', underlying:'BTC-USD', sector:'Crypto/Software', desc:'Software company that holds massive Bitcoin reserves. Trades like leveraged BTC.' },
+  COIN: { name:'Coinbase Global', type:'stock', leverage:1, direction:'bull', underlying:'BTC-USD', sector:'Crypto', desc:'Largest US crypto exchange. Revenue tied to crypto trading volume.' },
+  MARA: { name:'MARA Holdings (Marathon Digital)', type:'stock', leverage:1, direction:'bull', underlying:'BTC-USD', sector:'Crypto Mining', desc:'Bitcoin miner. Moves with BTC price but more volatile.' },
+  RIOT: { name:'Riot Platforms', type:'stock', leverage:1, direction:'bull', underlying:'BTC-USD', sector:'Crypto Mining', desc:'Bitcoin miner. Moves with BTC price.' },
+  CLSK: { name:'CleanSpark Inc.', type:'stock', leverage:1, direction:'bull', underlying:'BTC-USD', sector:'Crypto Mining', desc:'Bitcoin miner focused on sustainable energy.' },
+
+  // ── Defense ──
+  LMT:  { name:'Lockheed Martin', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Defense', desc:'F-35 fighter jets, missiles, space. Largest defense contractor.' },
+  RTX:  { name:'RTX Corp (Raytheon)', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Defense', desc:'Missiles, radar, jet engines (Pratt & Whitney). Major defense player.' },
+  NOC:  { name:'Northrop Grumman', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Defense', desc:'B-21 bomber, space systems, autonomous systems.' },
+  GD:   { name:'General Dynamics', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Defense', desc:'Submarines, tanks (Abrams), Gulfstream jets, IT services.' },
+  BA:   { name:'Boeing Co.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Defense/Aerospace', desc:'Commercial and military aircraft. Troubled but huge defense contracts.' },
+  KTOS: { name:'Kratos Defense & Security', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Defense', desc:'Drones, hypersonics, satellite comms. Smaller/growth defense play.' },
+
+  // ── Energy ──
+  XOM:  { name:'Exxon Mobil', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Energy', desc:'Largest US oil company. Integrated — upstream, downstream, chemicals.' },
+  CVX:  { name:'Chevron Corp.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Energy', desc:'Major integrated oil company. Permian Basin, LNG, refining.' },
+
+  // ── Gold Miners ──
+  NEM:  { name:'Newmont Corp.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Gold Miners', desc:'World\'s largest gold miner. Moves with gold price.' },
+  GOLD: { name:'Barrick Gold Corp.', type:'stock', leverage:1, direction:'bull', underlying:null, sector:'Gold Miners', desc:'Major gold and copper miner. Moves with gold price.' },
+};
+
+let watchlist = JSON.parse(localStorage.getItem('ts_watchlist') || '[]');
+let finnhubKey = localStorage.getItem('ts_finnhub') || '';
+
+// ═══════════════════════════════════════════════════════════════
+// CORS PROXY CHAIN for Yahoo Finance
+// Uses both query1 and query2 Yahoo domains, races multiple proxies
+// ═══════════════════════════════════════════════════════════════
+const CORS_PROXIES = [
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  url => `https://api.cors.lol/?url=${encodeURIComponent(url)}`,
+  url => `https://proxy.corsfix.com/?${encodeURIComponent(url)}`,
+  url => `https://cors-proxy.htmldriven.com/?url=${encodeURIComponent(url)}`,
+  url => `https://thingproxy.freeboard.io/fetch/${url}`,
+];
+let lastWorkingProxy = -1;
+
+async function yahooFetch(url) {
+  // Try both Yahoo domains
+  const url2 = url.replace('query1.finance.yahoo.com', 'query2.finance.yahoo.com');
+  const urls = [url, url2];
+
+  // If we have a known working proxy, try it first on both domains (fast path)
+  if (lastWorkingProxy >= 0) {
+    for (const u of urls) {
+      try {
+        const r = await tryProxy(lastWorkingProxy, u);
+        if (r) return r;
+      } catch(e) {}
+    }
+    // Last working proxy failed, reset it
+    lastWorkingProxy = -1;
+  }
+
+  // Race all proxies on both domains simultaneously
+  // Build array of all attempts: [proxy0+url1, proxy0+url2, proxy1+url1, ...]
+  const attempts = [];
+  for (let pi = 0; pi < CORS_PROXIES.length; pi++) {
+    for (const u of urls) {
+      attempts.push({ pi, url: u });
+    }
+  }
+  // Also try direct fetch (will fail from file:// or most origins, but cheap to try)
+  for (const u of urls) {
+    attempts.push({ pi: -1, url: u });
+  }
+
+  try {
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      let failures = 0;
+      const total = attempts.length;
+
+      attempts.forEach(({ pi, url: u }) => {
+        tryProxy(pi, u)
+          .then(result => {
+            if (result && !settled) {
+              settled = true;
+              if (pi >= 0) lastWorkingProxy = pi;
+              resolve(result);
+            } else {
+              failures++;
+              if (failures >= total && !settled) { settled = true; reject(new Error('All proxies failed')); }
+            }
+          })
+          .catch(() => {
+            failures++;
+            if (failures >= total && !settled) { settled = true; reject(new Error('All proxies failed')); }
+          });
+      });
+
+      // Global timeout
+      setTimeout(() => {
+        if (!settled) { settled = true; reject(new Error('Timeout')); }
+      }, 15000);
+    });
+  } catch(e) {
+    console.warn('yahooFetch: all attempts failed for', url, e.message);
+    return null;
+  }
+}
+
+async function tryProxy(pi, url) {
+  const fetchUrl = pi === -1 ? url : CORS_PROXIES[pi](url);
+  const r = await fetch(fetchUrl, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const text = await r.text();
+  // Some proxies wrap response in JSON (allorigins /get endpoint, htmldriven, etc.)
+  let data = text;
+  if (!data.trim().startsWith('{')) {
+    // Try to parse as wrapper JSON with .contents field
+    try {
+      const wrapper = JSON.parse(data);
+      if (wrapper.contents) data = wrapper.contents;
+      else throw new Error('not a wrapper');
+    } catch(e) {
+      throw new Error('Non-JSON response');
+    }
+  }
+  const json = JSON.parse(data);
+  const result = json?.chart?.result?.[0];
+  if (!result || !result.timestamp) throw new Error('No chart data');
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DATA FETCHING
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+// DATA CACHE — avoids redundant API calls for recently-fetched data
+// ═══════════════════════════════════════════════════════════════
+const dataCache = new Map(); // key → { data, ts }
+const CACHE_TTL = {
+  finnhub: 60 * 1000,     // 1 min  — live quotes change fast
+  intraday: 2 * 60 * 1000, // 2 min  — 30m candles, moderate refresh
+  daily: 10 * 60 * 1000,   // 10 min — daily bars barely change intraday
+};
+
+function cacheGet(key, ttl) {
+  const entry = dataCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > ttl) { dataCache.delete(key); return null; }
+  return entry.data;
+}
+
+function cacheSet(key, data) {
+  dataCache.set(key, { data, ts: Date.now() });
+}
+
+// Get intraday 30m candles from Yahoo (2 days)
+async function getIntraday(sym) {
+  const key = `intraday:${sym}`;
+  const cached = cacheGet(key, CACHE_TTL.intraday);
+  if (cached) return cached;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=2d&interval=30m&includePrePost=false`;
+  const data = await yahooFetch(url);
+  if (data) cacheSet(key, data);
+  return data;
+}
+
+// Get daily candles from Yahoo (3 months for moving averages)
+async function getDaily(sym) {
+  const key = `daily:${sym}`;
+  const cached = cacheGet(key, CACHE_TTL.daily);
+  if (cached) return cached;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=3mo&interval=1d&includePrePost=false`;
+  const data = await yahooFetch(url);
+  if (data) cacheSet(key, data);
+  return data;
+}
+
+// Get Finnhub quote
+async function getFinnhubQuote(sym) {
+  if (!finnhubKey) return null;
+  const key = `fhquote:${sym}`;
+  const cached = cacheGet(key, CACHE_TTL.finnhub);
+  if (cached) return cached;
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${finnhubKey}`, { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (data) cacheSet(key, data);
+    return data;
+  } catch(e) { return null; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TECHNICAL CALCULATIONS
+// ═══════════════════════════════════════════════════════════════
+
+function calcEMA(data, period) {
+  if (data.length < period) return [];
+  const k = 2 / (period + 1);
+  let ema = [data.slice(0, period).reduce((a, b) => a + b, 0) / period];
+  for (let i = period; i < data.length; i++) {
+    ema.push(data[i] * k + ema[ema.length - 1] * (1 - k));
+  }
+  return ema;
+}
+
+function calcSMA(data, period) {
+  const result = [];
+  for (let i = period - 1; i < data.length; i++) {
+    result.push(data.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0) / period);
+  }
+  return result;
+}
+
+function calcRSI(closes, period = 14) {
+  if (closes.length < period + 1) return null;
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff; else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+  }
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+function calcMACD(closes) {
+  const ema12 = calcEMA(closes, 12);
+  const ema26 = calcEMA(closes, 26);
+  if (ema12.length === 0 || ema26.length === 0) return { line: 0, signal: 0, histogram: 0 };
+  // Align lengths
+  const offset = ema12.length - ema26.length;
+  const macdLine = [];
+  for (let i = 0; i < ema26.length; i++) {
+    macdLine.push(ema12[i + offset] - ema26[i]);
+  }
+  const signalLine = calcEMA(macdLine, 9);
+  if (signalLine.length === 0) return { line: macdLine[macdLine.length-1]||0, signal: 0, histogram: 0 };
+  const ml = macdLine[macdLine.length - 1];
+  const sl = signalLine[signalLine.length - 1];
+  const prevMl = macdLine.length > 1 ? macdLine[macdLine.length - 2] : ml;
+  const prevSl = signalLine.length > 1 ? signalLine[signalLine.length - 2] : sl;
+  return { line: ml, signal: sl, histogram: ml - sl, prevHistogram: prevMl - prevSl };
+}
+
+function calcVWAP(timestamps, highs, lows, closes, volumes) {
+  // Intraday VWAP: reset each day
+  let cumTPV = 0, cumVol = 0;
+  let lastDay = -1;
+  const vwaps = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const d = new Date(timestamps[i] * 1000);
+    const day = d.getUTCDay() * 1000 + d.getUTCDate();
+    if (day !== lastDay) { cumTPV = 0; cumVol = 0; lastDay = day; }
+    const tp = (highs[i] + lows[i] + closes[i]) / 3;
+    cumTPV += tp * volumes[i];
+    cumVol += volumes[i];
+    vwaps.push(cumVol > 0 ? cumTPV / cumVol : closes[i]);
+  }
+  return vwaps;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SIGNAL ENGINE
+// ═══════════════════════════════════════════════════════════════
+
+async function analyzeSymbol(sym) {
+  const [intraday, daily, fhQuote] = await Promise.all([
+    getIntraday(sym),
+    getDaily(sym),
+    getFinnhubQuote(sym)
+  ]);
+
+  if (!daily || !daily.timestamp || daily.timestamp.length < 21) {
+    throw new Error('Not enough data — check the symbol');
+  }
+
+  const dCloses = daily.indicators.quote[0].close.filter(v => v != null);
+  const dHighs = daily.indicators.quote[0].high.filter(v => v != null);
+  const dLows = daily.indicators.quote[0].low.filter(v => v != null);
+  const dVolumes = daily.indicators.quote[0].volume.filter(v => v != null);
+
+  // Current price
+  let price = fhQuote?.c || dCloses[dCloses.length - 1];
+  let prevClose = fhQuote?.pc || dCloses[dCloses.length - 2];
+  let dayChange = price - prevClose;
+  let dayChangePct = (dayChange / prevClose) * 100;
+  let dayHigh = fhQuote?.h || dHighs[dHighs.length - 1];
+  let dayLow = fhQuote?.l || dLows[dLows.length - 1];
+
+  // ── Daily indicators ──
+  const ema9 = calcEMA(dCloses, 9);
+  const ema21 = calcEMA(dCloses, 21);
+  const sma20 = calcSMA(dCloses, 20);
+  const rsi = calcRSI(dCloses, 14);
+  const macd = calcMACD(dCloses);
+
+  const curEma9 = ema9[ema9.length - 1];
+  const curEma21 = ema21[ema21.length - 1];
+  const curSma20 = sma20[sma20.length - 1];
+  const prevEma9 = ema9.length > 1 ? ema9[ema9.length - 2] : curEma9;
+  const prevEma21 = ema21.length > 1 ? ema21[ema21.length - 2] : curEma21;
+
+  // Previous day high/low
+  const prevDayHigh = dHighs[dHighs.length - 2];
+  const prevDayLow = dLows[dLows.length - 2];
+
+  // Average volume (20-day)
+  const recentVols = dVolumes.slice(-21, -1);
+  const avgVol = recentVols.reduce((a, b) => a + b, 0) / recentVols.length;
+  const todayVol = dVolumes[dVolumes.length - 1];
+  const relVol = todayVol / avgVol;
+
+  // Average daily range (20-day)
+  const ranges = [];
+  for (let i = dHighs.length - 21; i < dHighs.length - 1; i++) {
+    if (i >= 0) ranges.push(dHighs[i] - dLows[i]);
+  }
+  const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+  const todayRange = dayHigh - dayLow;
+  const rangeExpansion = todayRange / avgRange;
+
+  // Intraday VWAP
+  let vwap = null;
+  let priceVsVwap = 0;
+  if (intraday && intraday.timestamp && intraday.timestamp.length > 2) {
+    const iq = intraday.indicators.quote[0];
+    const iTs = intraday.timestamp;
+    const iH = iq.high, iL = iq.low, iC = iq.close, iV = iq.volume;
+    const vwaps = calcVWAP(iTs, iH, iL, iC, iV);
+    vwap = vwaps[vwaps.length - 1];
+    priceVsVwap = ((price - vwap) / vwap) * 100;
+  }
+
+  // ── SCORING ──
+  // Each signal contributes a weighted score: positive = bullish, negative = bearish
+  const signals = [];
+  let totalScore = 0;
+  const weights = {
+    vwap: 15,
+    ema_trend: 12,
+    ema_cross: 10,
+    sma20: 10,
+    rsi: 12,
+    macd: 12,
+    volume: 13,
+    range: 8,
+    prevDay: 8,
+  };
+
+  // 1. VWAP
+  if (vwap != null) {
+    if (priceVsVwap > 0.15) {
+      totalScore += weights.vwap;
+      signals.push({ text: `Price above VWAP by ${priceVsVwap.toFixed(2)}%`, type: 'bull' });
+    } else if (priceVsVwap < -0.15) {
+      totalScore -= weights.vwap;
+      signals.push({ text: `Price below VWAP by ${Math.abs(priceVsVwap).toFixed(2)}%`, type: 'bear' });
+    } else {
+      signals.push({ text: 'Price hugging VWAP — no edge', type: 'neutral' });
+    }
+    // Guard: extended too far from VWAP
+    if (Math.abs(priceVsVwap) > 1.5) {
+      signals.push({ text: `Extended ${priceVsVwap > 0 ? 'above' : 'below'} VWAP (${Math.abs(priceVsVwap).toFixed(1)}%) — caution on entries`, type: 'neutral' });
+      totalScore *= 0.7; // penalize extended moves
+    }
+  }
+
+  // 2. EMA 9/21 direction
+  const ema9Rising = curEma9 > prevEma9;
+  const ema21Rising = curEma21 > prevEma21;
+  if (ema9Rising && ema21Rising) {
+    totalScore += weights.ema_trend;
+    signals.push({ text: 'Short-term and medium-term trends both rising', type: 'bull' });
+  } else if (!ema9Rising && !ema21Rising) {
+    totalScore -= weights.ema_trend;
+    signals.push({ text: 'Short-term and medium-term trends both falling', type: 'bear' });
+  } else {
+    signals.push({ text: 'Trends mixed — short vs medium disagree', type: 'neutral' });
+  }
+
+  // 3. EMA cross
+  if (curEma9 > curEma21 && prevEma9 <= prevEma21) {
+    totalScore += weights.ema_cross;
+    signals.push({ text: 'Bullish crossover: fast trend crossed above slow', type: 'bull' });
+  } else if (curEma9 < curEma21 && prevEma9 >= prevEma21) {
+    totalScore -= weights.ema_cross;
+    signals.push({ text: 'Bearish crossover: fast trend crossed below slow', type: 'bear' });
+  } else if (curEma9 > curEma21) {
+    totalScore += weights.ema_cross * 0.5;
+  } else {
+    totalScore -= weights.ema_cross * 0.5;
+  }
+
+  // 4. SMA 20 trend
+  if (price > curSma20) {
+    totalScore += weights.sma20;
+    signals.push({ text: `Price above 20-day average ($${curSma20.toFixed(2)})`, type: 'bull' });
+  } else {
+    totalScore -= weights.sma20;
+    signals.push({ text: `Price below 20-day average ($${curSma20.toFixed(2)})`, type: 'bear' });
+  }
+
+  // 5. RSI
+  if (rsi != null) {
+    if (rsi > 70) {
+      totalScore -= weights.rsi * 0.8;
+      signals.push({ text: `Momentum stretched high (RSI ${rsi.toFixed(0)}) — pullback risk`, type: 'bear' });
+    } else if (rsi > 55) {
+      totalScore += weights.rsi;
+      signals.push({ text: `Healthy upward momentum (RSI ${rsi.toFixed(0)})`, type: 'bull' });
+    } else if (rsi < 30) {
+      totalScore += weights.rsi * 0.5;
+      signals.push({ text: `Washed out (RSI ${rsi.toFixed(0)}) — bounce possible`, type: 'bull' });
+    } else if (rsi < 45) {
+      totalScore -= weights.rsi;
+      signals.push({ text: `Weak momentum (RSI ${rsi.toFixed(0)})`, type: 'bear' });
+    } else {
+      signals.push({ text: `Momentum flat/neutral (RSI ${rsi.toFixed(0)})`, type: 'neutral' });
+    }
+  }
+
+  // 6. MACD histogram
+  if (macd.histogram > 0 && macd.prevHistogram <= 0) {
+    totalScore += weights.macd;
+    signals.push({ text: 'MACD just flipped positive — fresh momentum', type: 'bull' });
+  } else if (macd.histogram < 0 && macd.prevHistogram >= 0) {
+    totalScore -= weights.macd;
+    signals.push({ text: 'MACD just flipped negative — momentum fading', type: 'bear' });
+  } else if (macd.histogram > 0) {
+    totalScore += weights.macd * 0.5;
+  } else {
+    totalScore -= weights.macd * 0.5;
+  }
+
+  // 7. Relative Volume
+  if (relVol > 1.5) {
+    totalScore += weights.volume * (totalScore > 0 ? 1 : -1); // volume confirms direction
+    signals.push({ text: `Volume ${relVol.toFixed(1)}x normal — big money in play`, type: totalScore > 0 ? 'bull' : 'bear' });
+  } else if (relVol < 0.6) {
+    totalScore *= 0.6; // weak volume kills conviction
+    signals.push({ text: `Volume only ${relVol.toFixed(1)}x normal — low conviction`, type: 'neutral' });
+  }
+
+  // 8. Range expansion
+  if (rangeExpansion > 1.3) {
+    signals.push({ text: `Range expanded ${rangeExpansion.toFixed(1)}x average — volatility up`, type: totalScore > 0 ? 'bull' : 'bear' });
+  } else if (rangeExpansion < 0.5) {
+    totalScore *= 0.8;
+    signals.push({ text: 'Tight range — choppy, no clear direction', type: 'neutral' });
+  }
+
+  // 9. Previous day levels
+  if (price > prevDayHigh) {
+    totalScore += weights.prevDay;
+    signals.push({ text: `Broke above yesterday's high ($${prevDayHigh.toFixed(2)})`, type: 'bull' });
+  } else if (price < prevDayLow) {
+    totalScore -= weights.prevDay;
+    signals.push({ text: `Broke below yesterday's low ($${prevDayLow.toFixed(2)})`, type: 'bear' });
+  }
+
+  // ── GUARDRAILS ──
+  let blockers = [];
+
+  // Flat chop: tight range + low volume
+  if (rangeExpansion < 0.6 && relVol < 0.8) {
+    blockers.push('Dead zone — range and volume both low. Wait for a breakout.');
+    totalScore *= 0.4;
+  }
+
+  // Exhaustion spike: big move + overbought RSI + extended from VWAP
+  if (rsi > 75 && priceVsVwap > 1.2 && rangeExpansion > 1.5) {
+    blockers.push('Looks like an exhaustion spike — price stretched far on high momentum. Don\'t chase.');
+    totalScore *= 0.3;
+  }
+
+  // Countertrend with no volume
+  if (Math.abs(totalScore) < 15 && relVol < 0.7) {
+    blockers.push('No clear direction with weak volume. Stay out.');
+  }
+
+  // ── FINAL SIGNAL ──
+  const maxPossible = Object.values(weights).reduce((a, b) => a + b, 0);
+  const normalizedScore = (totalScore / maxPossible) * 100;
+  let signal, confidence;
+
+  if (normalizedScore > 20 && blockers.length === 0) {
+    signal = 'BUY';
+    confidence = Math.min(95, Math.round(30 + normalizedScore * 0.65));
+  } else if (normalizedScore < -20 && blockers.length === 0) {
+    signal = 'SELL';
+    confidence = Math.min(95, Math.round(30 + Math.abs(normalizedScore) * 0.65));
+  } else {
+    signal = 'WAIT';
+    confidence = Math.round(40 + Math.abs(normalizedScore) * 0.3);
+  }
+
+  // For inverse ETFs, flip the signal label
+  const isInverse = IS_INVERSE.has(sym);
+
+  return {
+    sym, price, dayChange, dayChangePct, dayHigh, dayLow,
+    signal, confidence, signals, blockers, isInverse,
+    metrics: {
+      vwap, priceVsVwap,
+      ema9: curEma9, ema21: curEma21, sma20: curSma20,
+      rsi, macdHist: macd.histogram,
+      relVol, rangeExpansion,
+      prevDayHigh, prevDayLow
+    }
+  };
+}
+
+// Get sector/index confirmation
+async function getSectorSignal(sym) {
+  const ref = SECTOR_MAP[sym];
+  if (!ref || ref === sym) return null;
+  try {
+    const fq = await getFinnhubQuote(ref);
+    if (!fq) return null;
+    const change = ((fq.c - fq.pc) / fq.pc) * 100;
+    return { sym: ref, price: fq.c, change };
+  } catch(e) { return null; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UI RENDERING
+// ═══════════════════════════════════════════════════════════════
+
+function renderCard(data, sectorData) {
+  const { sym, price, dayChange, dayChangePct, signal, confidence, signals, blockers, metrics, isInverse } = data;
+  const sig = signal.toLowerCase();
+  const changeClass = dayChange >= 0 ? 'up' : 'down';
+  const changeSign = dayChange >= 0 ? '+' : '';
+
+  // Pick top reasons (strongest signals only)
+  const topReasons = signals
+    .filter(s => s.type !== 'neutral')
+    .slice(0, 5);
+  const neutralReasons = signals.filter(s => s.type === 'neutral').slice(0, 2);
+
+  // Display signal — for inverse ETFs, note the relationship
+  let signalLabel = signal;
+  let signalNote = '';
+  if (isInverse && signal === 'BUY') {
+    signalNote = '(Bearish setup — this is an inverse ETF)';
+  } else if (isInverse && signal === 'SELL') {
+    signalNote = '(Bullish setup — inverse ETF goes down)';
+  }
+
+  let html = `
+    <div class="card ${sig}" id="card-${sym}">
+      <div class="card-head">
+        <div>
+          <div class="card-sym">${sym}</div>
+          <div class="card-price">$${price.toFixed(2)} <span class="card-change ${changeClass}">${changeSign}${dayChange.toFixed(2)} (${changeSign}${dayChangePct.toFixed(2)}%)</span></div>
+        </div>
+        <div class="card-actions">
+          <button class="card-refresh" onclick="refreshSymbol('${sym}',this)" title="Refresh">↻</button>
+          <button class="card-remove" onclick="removeSymbol('${sym}')" title="Remove">✕</button>
+        </div>
+      </div>`;
+
+  // Symbol info section
+  const info = SYMBOL_INFO[sym];
+  if (info) {
+    const typeLabels = { letf:'Leveraged ETF', ietf:'Inverse ETF', etf:'ETF', stock:'Stock' };
+    html += `<div class="sym-info">`;
+    html += `<div class="sym-info-name">${info.name}</div>`;
+    html += `<div class="sym-info-tags">`;
+    html += `<span class="sym-tag ${info.type}">${typeLabels[info.type]}</span>`;
+    html += `<span class="sym-tag sector">${info.sector}</span>`;
+    if (info.leverage > 1) {
+      html += `<span class="sym-tag leverage">${info.leverage}x Leverage</span>`;
+    }
+    if (info.type === 'ietf') {
+      html += `<span class="sym-tag direction-bear">Inverse</span>`;
+    }
+    html += `</div>`;
+    html += `<div class="sym-info-desc">${info.desc}</div>`;
+    if (info.underlying) {
+      const dirWord = info.direction === 'bear' ? 'inversely to' : 'with';
+      const leverageWord = info.leverage > 1 ? ` at ${info.leverage}x the daily move` : '';
+      html += `<div class="sym-info-underlying">Derived from <strong>${info.underlying}</strong> — moves ${dirWord} ${info.underlying}${leverageWord}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `
+      <div class="signal-row">
+        <div class="signal-badge ${sig}">${signalLabel}</div>
+        <div class="confidence"><strong>${confidence}%</strong> confidence ${signalNote}</div>
+      </div>`;
+
+  // Blockers
+  if (blockers.length > 0) {
+    blockers.forEach(b => {
+      html += `<div class="blocker"><span class="blocker-icon">⚠</span>${b}</div>`;
+    });
+  }
+
+  // Reasons
+  html += `<div class="reasons">`;
+  topReasons.forEach(r => {
+    const iconClass = r.type === 'bull' ? 'bull' : 'bear';
+    const icon = r.type === 'bull' ? '▲' : '▼';
+    html += `<div class="reason"><span class="reason-icon ${iconClass}">${icon}</span>${r.text}</div>`;
+  });
+  neutralReasons.forEach(r => {
+    html += `<div class="reason"><span class="reason-icon neutral">●</span>${r.text}</div>`;
+  });
+  html += `</div>`;
+
+  // Metrics
+  const vwapClass = metrics.priceVsVwap > 0.15 ? 'bull' : metrics.priceVsVwap < -0.15 ? 'bear' : 'neutral';
+  const rsiClass = metrics.rsi > 55 ? 'bull' : metrics.rsi < 45 ? 'bear' : 'neutral';
+  const volClass = metrics.relVol > 1.3 ? 'bull' : metrics.relVol < 0.7 ? 'bear' : 'neutral';
+  const macdClass = metrics.macdHist > 0 ? 'bull' : 'bear';
+  const emaClass = metrics.ema9 > metrics.ema21 ? 'bull' : 'bear';
+  const rangeClass = metrics.rangeExpansion > 1.2 ? 'bull' : metrics.rangeExpansion < 0.6 ? 'bear' : 'neutral';
+
+  html += `
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">VWAP</div>
+          <div class="metric-val ${vwapClass}">${metrics.vwap ? (metrics.priceVsVwap > 0 ? '+' : '') + metrics.priceVsVwap.toFixed(2) + '%' : 'N/A'}</div>
+          <div class="tip">Shows where price sits relative to the day's average price weighted by volume. Above VWAP means buyers are in control. Below means sellers. Being way too far above can mean the move is stretched.</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">RSI</div>
+          <div class="metric-val ${rsiClass}">${metrics.rsi ? metrics.rsi.toFixed(0) : 'N/A'}</div>
+          <div class="tip">Measures how fast price is moving up vs down on a 0-100 scale. Above 70 means it's overheated and might pull back. Below 30 means it's been beaten up and might bounce. 50-60 is healthy upward momentum.</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Vol</div>
+          <div class="metric-val ${volClass}">${metrics.relVol.toFixed(1)}x</div>
+          <div class="tip">Today's volume compared to the 20-day average. Above 1.5x means serious participation — the move has conviction. Below 0.7x means nobody's really trading, so the price action doesn't mean much.</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">MACD</div>
+          <div class="metric-val ${macdClass}">${metrics.macdHist > 0 ? '+' : ''}${metrics.macdHist.toFixed(3)}</div>
+          <div class="tip">Tracks whether momentum is speeding up or slowing down. When the bar flips from negative to positive, it's a fresh push up. When it flips negative, momentum is fading. Size of the bar shows how strong the push is.</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">EMA 9/21</div>
+          <div class="metric-val ${emaClass}">${metrics.ema9 > metrics.ema21 ? '▲ Bull' : '▼ Bear'}</div>
+          <div class="tip">Compares the fast 9-day trend to the slower 21-day trend. When the fast one is above the slow one, the trend is up. A fresh crossover (just switched) is a stronger signal than one that's been in place for a while.</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Range</div>
+          <div class="metric-val ${rangeClass}">${metrics.rangeExpansion.toFixed(1)}x</div>
+          <div class="tip">Today's price range compared to the 20-day average range. Above 1.3x means the market is making big moves — good for riding trends. Below 0.5x means it's dead/choppy — signals in low-range days are unreliable.</div>
+        </div>
+      </div>`;
+
+  // Sector reference
+  if (sectorData) {
+    const sDir = sectorData.change >= 0 ? 'up' : 'down';
+    const sSign = sectorData.change >= 0 ? '+' : '';
+    const confirms = (dayChange >= 0 && sectorData.change >= 0) || (dayChange < 0 && sectorData.change < 0);
+    html += `
+      <div class="sector-ref">
+        <span class="dot ${sDir}"></span>
+        Reference: ${sectorData.sym} ${sSign}${sectorData.change.toFixed(2)}%
+        — ${confirms ? 'confirms' : 'does NOT confirm'} the move
+      </div>`;
+  }
+
+  // Timestamp
+  html += `<div class="timestamp">Updated ${new Date().toLocaleTimeString()}</div>`;
+
+  html += `</div>`;
+  return html;
+}
+
+function renderLoading(sym) {
+  return `<div class="card" id="card-${sym}"><div class="card-head"><div class="card-sym">${sym}</div></div><div class="card-loading"><div class="spinner"></div>Analyzing...</div></div>`;
+}
+
+function renderError(sym, msg) {
+  return `<div class="card" id="card-${sym}"><div class="card-head"><div class="card-sym">${sym}</div><div class="card-actions"><button class="card-refresh" onclick="refreshSymbol('${sym}',this)" title="Refresh">↻</button><button class="card-remove" onclick="removeSymbol('${sym}')">✕</button></div></div><div class="card-error">${msg}</div></div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WATCHLIST MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+
+function saveWatchlist() {
+  localStorage.setItem('ts_watchlist', JSON.stringify(watchlist));
+}
+
+function addSymbol() {
+  const input = document.getElementById('symInput');
+  const sym = input.value.trim().toUpperCase();
+  if (!sym) return;
+  if (watchlist.includes(sym)) { input.value = ''; return; }
+  watchlist.push(sym);
+  saveWatchlist();
+  input.value = '';
+  analyzeAndRender(sym);
+}
+
+function removeSymbol(sym) {
+  watchlist = watchlist.filter(s => s !== sym);
+  saveWatchlist();
+  const card = document.getElementById(`card-${sym}`);
+  if (card) card.remove();
+}
+
+function refreshSymbol(sym, btnEl) {
+  if (btnEl) btnEl.classList.add('spinning');
+  analyzeAndRender(sym);
+}
+
+function clearAll() {
+  watchlist = [];
+  saveWatchlist();
+  document.getElementById('grid').innerHTML = '';
+}
+
+function loadPreset(name) {
+  const syms = PRESETS[name];
+  let added = 0;
+  syms.forEach(s => {
+    if (!watchlist.includes(s)) { watchlist.push(s); added++; }
+  });
+  if (added === 0) return; // all already in list
+  saveWatchlist();
+  renderAll();
+}
+
+async function analyzeAndRender(sym) {
+  const grid = document.getElementById('grid');
+  // Add loading card
+  let existingCard = document.getElementById(`card-${sym}`);
+  if (existingCard) {
+    existingCard.outerHTML = renderLoading(sym);
+  } else {
+    grid.insertAdjacentHTML('beforeend', renderLoading(sym));
+  }
+
+  try {
+    const [data, sectorData] = await Promise.all([
+      analyzeSymbol(sym),
+      getSectorSignal(sym)
+    ]);
+
+    // Apply sector confirmation to score
+    if (sectorData) {
+      const confirms = (data.dayChange >= 0 && sectorData.change >= 0) || (data.dayChange < 0 && sectorData.change < 0);
+      if (!confirms && data.signal !== 'WAIT') {
+        // Sector disagrees — downgrade confidence
+        data.confidence = Math.max(25, data.confidence - 15);
+        data.signals.push({ text: `${sectorData.sym} not confirming — move might fade`, type: 'neutral' });
+      } else if (confirms && Math.abs(sectorData.change) > 0.5) {
+        data.confidence = Math.min(95, data.confidence + 5);
+      }
+    }
+
+    const card = document.getElementById(`card-${sym}`);
+    if (card) card.outerHTML = renderCard(data, sectorData);
+  } catch(e) {
+    const card = document.getElementById(`card-${sym}`);
+    if (card) card.outerHTML = renderError(sym, `Could not analyze: ${e.message}`);
+  }
+}
+
+let renderGeneration = 0;
+async function renderAll() {
+  const gen = ++renderGeneration;
+  document.getElementById('grid').innerHTML = '';
+  // Stagger fetches to avoid overwhelming proxies
+  for (let i = 0; i < watchlist.length; i++) {
+    if (gen !== renderGeneration) return; // cancelled by newer renderAll
+    analyzeAndRender(watchlist[i]);
+    if (i % 3 === 2) await new Promise(r => setTimeout(r, 800));
+  }
+}
+
+function refreshAll() {
+  renderAll();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+
+// Tooltip positioning — runs on hover via event delegation
+document.getElementById('grid').addEventListener('mouseenter', function(e) {
+  const metric = e.target.closest('.metric');
+  if (!metric) return;
+  const tip = metric.querySelector('.tip');
+  if (!tip) return;
+
+  // Reset classes
+  tip.className = 'tip';
+
+  // Get positions
+  const metricRect = metric.getBoundingClientRect();
+  const tipWidth = 220;
+
+  // Vertical: show above unless too close to top of viewport
+  if (metricRect.top < 140) {
+    tip.classList.add('pos-below');
+  } else {
+    tip.classList.add('pos-above');
+  }
+
+  // Horizontal: check if centered tip would clip viewport edges
+  const centerX = metricRect.left + metricRect.width / 2;
+  if (centerX - tipWidth / 2 < 8) {
+    tip.classList.add('align-right');
+  } else if (centerX + tipWidth / 2 > window.innerWidth - 8) {
+    tip.classList.add('align-left');
+  }
+}, true);
+
+const apiInput = document.getElementById('apiKey');
+apiInput.value = finnhubKey;
+apiInput.addEventListener('change', () => {
+  finnhubKey = apiInput.value.trim();
+  localStorage.setItem('ts_finnhub', finnhubKey);
+  document.getElementById('statusDot').classList.toggle('live', finnhubKey.length > 0);
+});
+if (finnhubKey) document.getElementById('statusDot').classList.add('live');
+
+document.getElementById('symInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addSymbol();
+});
+
+// Auto-refresh every 3 minutes
+setInterval(() => {
+  if (watchlist.length > 0 && document.visibilityState === 'visible') {
+    renderAll();
+  }
+}, 180000);
+
+// Boot
+if (watchlist.length > 0) {
+  renderAll();
+}
+</script>
+</body>
+</html>
