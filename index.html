@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0a0e17">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TradeSignals">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>Trade Signals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -163,6 +169,44 @@ body{min-height:100vh;padding:20px 16px 60px;}
 
 /* Timestamp */
 .timestamp{padding:0 18px 14px;font-size:0.68rem;color:var(--text3);font-family:var(--mono);}
+
+/* ── Position Tracker ── */
+.position-bar{margin:0 18px 14px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;}
+.position-bar.in-trade{border-color:rgba(59,130,246,0.3);}
+.pos-entry-form{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.pos-entry-form label{font-size:0.72rem;color:var(--text3);}
+.pos-input{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--mono);font-size:0.78rem;width:80px;outline:none;}
+.pos-input:focus{border-color:var(--blue);}
+.pos-input::placeholder{color:var(--text3);}
+.pos-ticker-input{width:65px;text-transform:uppercase;}
+.pos-btn{padding:4px 12px;border-radius:6px;border:none;font-family:var(--font);font-weight:600;font-size:0.72rem;cursor:pointer;transition:all 0.15s;}
+.pos-btn-enter{background:var(--blue);color:#fff;}
+.pos-btn-enter:hover{filter:brightness(1.15);}
+.pos-btn-exit{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,0.25);}
+.pos-btn-exit:hover{background:rgba(239,68,68,0.15);}
+
+/* Active position display */
+.pos-active{display:flex;flex-direction:column;gap:8px;}
+.pos-header{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.pos-ticker-badge{font-family:var(--mono);font-weight:700;font-size:0.85rem;padding:3px 10px;border-radius:5px;background:var(--blue-bg);color:var(--blue);border:1px solid rgba(59,130,246,0.25);}
+.pos-direction{font-size:0.7rem;font-weight:600;text-transform:uppercase;padding:2px 8px;border-radius:4px;}
+.pos-direction.long{background:var(--green-bg);color:var(--green);}
+.pos-direction.short{background:var(--red-bg);color:var(--red);}
+.pos-pnl-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.pos-entry-label{font-size:0.72rem;color:var(--text3);}
+.pos-entry-price{font-family:var(--mono);font-size:0.82rem;color:var(--text2);}
+.pos-pnl{font-family:var(--mono);font-size:1rem;font-weight:700;}
+.pos-pnl.profit{color:var(--green);}
+.pos-pnl.loss{color:var(--red);}
+.pos-leverage-note{font-size:0.68rem;color:var(--text3);}
+.pos-stop{font-size:0.72rem;color:var(--amber);font-family:var(--mono);margin-top:2px;}
+
+/* Exit signal */
+.exit-signal{margin:0 18px 14px;padding:10px 14px;border-radius:8px;display:flex;align-items:flex-start;gap:8px;font-size:0.8rem;line-height:1.4;}
+.exit-signal.hold{background:var(--green-bg);border:1px solid rgba(34,197,94,0.2);color:var(--green);}
+.exit-signal.exit{background:var(--red-bg);border:1px solid rgba(239,68,68,0.2);color:var(--red);}
+.exit-signal.caution{background:var(--amber-bg);border:1px solid rgba(245,158,11,0.2);color:var(--amber);}
+.exit-icon{font-size:0.9rem;flex-shrink:0;margin-top:1px;}
 
 /* Symbol Info Bar */
 .sym-info{padding:0 18px 12px;}
@@ -1026,6 +1070,173 @@ async function getSectorSignal(sym) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// POSITION TRACKER + EXIT SIGNALS
+// ═══════════════════════════════════════════════════════════════
+
+function getPositions() {
+  return JSON.parse(localStorage.getItem('ts_positions') || '{}');
+}
+
+function savePositions(pos) {
+  localStorage.setItem('ts_positions', JSON.stringify(pos));
+}
+
+function enterPosition(watchSym) {
+  const tickerInput = document.getElementById(`pos-ticker-${watchSym}`);
+  const priceInput = document.getElementById(`pos-price-${watchSym}`);
+  const ticker = (tickerInput?.value || watchSym).trim().toUpperCase();
+  const entryPrice = parseFloat(priceInput?.value);
+  if (!ticker || isNaN(entryPrice) || entryPrice <= 0) return;
+
+  // Determine direction and leverage from SYMBOL_INFO
+  const info = SYMBOL_INFO[ticker];
+  const isInverse = IS_INVERSE.has(ticker);
+  const leverage = info?.leverage || 1;
+  const direction = isInverse ? 'short' : 'long';
+
+  const positions = getPositions();
+  positions[watchSym] = {
+    ticker,
+    entryPrice,
+    direction,
+    leverage,
+    timestamp: Date.now()
+  };
+  savePositions(positions);
+
+  // Re-render this card
+  refreshSymbol(watchSym);
+}
+
+function exitPosition(watchSym) {
+  const positions = getPositions();
+  delete positions[watchSym];
+  savePositions(positions);
+  refreshSymbol(watchSym);
+}
+
+function calcExitSignal(position, data, sectorData) {
+  const { ticker, entryPrice, direction, leverage } = position;
+  const { price, metrics } = data;
+
+  // Calculate P&L on the underlying
+  const underlyingMove = ((price - entryPrice) / entryPrice) * 100;
+  // Approximate leveraged P&L (daily leverage, so this is approximate for multi-day)
+  const leveragedMove = direction === 'long' ? underlyingMove * leverage : -underlyingMove * leverage;
+
+  // Calculate trailing stop based on ATR
+  const stopDistance = metrics.atr ? metrics.atr * 0.75 : null;
+  let stopPrice = null;
+  if (stopDistance) {
+    stopPrice = direction === 'long' ? price - stopDistance : price + stopDistance;
+  }
+
+  // ── Exit signal logic ──
+  const exitReasons = [];
+  let exitScore = 0; // positive = reasons to exit, negative = reasons to hold
+
+  // 1. VWAP crossed against position
+  if (direction === 'long' && metrics.priceVsVwap < -0.15) {
+    exitScore += 25;
+    exitReasons.push('Price dropped below VWAP — buyers lost control');
+  } else if (direction === 'short' && metrics.priceVsVwap > 0.15) {
+    exitScore += 25;
+    exitReasons.push('Price climbed above VWAP — sellers lost control');
+  }
+
+  // 2. Volume dying
+  if (metrics.volTrend != null && metrics.volTrend < 0.6) {
+    exitScore += 20;
+    exitReasons.push('Volume fading fast — the move is losing conviction');
+  }
+
+  // 3. MACD decelerating against position
+  if (direction === 'long' && metrics.macdHist > 0 && !metrics.macdHistRising) {
+    exitScore += 15;
+    exitReasons.push('Momentum positive but slowing — about to roll over');
+  } else if (direction === 'long' && metrics.macdHist < 0) {
+    exitScore += 25;
+    exitReasons.push('Momentum flipped negative — trend reversing');
+  } else if (direction === 'short' && metrics.macdHist < 0 && !metrics.macdHistRising) {
+    exitScore += 15;
+    exitReasons.push('Downward momentum slowing — sellers running out of steam');
+  } else if (direction === 'short' && metrics.macdHist > 0) {
+    exitScore += 25;
+    exitReasons.push('Momentum flipped positive — downtrend reversing');
+  }
+
+  // 4. RSI extreme
+  const rsi = metrics.intradayRsi || metrics.dailyRsi;
+  if (direction === 'long' && rsi && rsi > 78) {
+    exitScore += 20;
+    exitReasons.push(`RSI at ${rsi.toFixed(0)} — take profit before the snapback`);
+  } else if (direction === 'short' && rsi && rsi < 25) {
+    exitScore += 20;
+    exitReasons.push(`RSI at ${rsi.toFixed(0)} — oversold, bounce incoming`);
+  }
+
+  // 5. Range exhaustion
+  if (metrics.atrUsedPct && metrics.atrUsedPct > 90) {
+    exitScore += 15;
+    exitReasons.push(`${metrics.atrUsedPct.toFixed(0)}% of daily range used — nowhere left to go today`);
+  }
+
+  // 6. Sector divergence
+  if (sectorData) {
+    const sectorAgainst = (direction === 'long' && sectorData.change < -0.3) || (direction === 'short' && sectorData.change > 0.3);
+    if (sectorAgainst) {
+      exitScore += 15;
+      exitReasons.push(`${sectorData.sym} moving against your position (${sectorData.change > 0 ? '+' : ''}${sectorData.change.toFixed(2)}%)`);
+    }
+  }
+
+  // 7. In profit + momentum fading = take profit
+  if (leveragedMove > 2 && exitScore >= 15) {
+    exitScore += 10;
+    exitReasons.push(`Up ${leveragedMove.toFixed(1)}% with warning signs — lock in gains`);
+  }
+
+  // 8. Reasons to HOLD
+  const holdReasons = [];
+  if (direction === 'long' && metrics.priceVsVwap > 0.1 && metrics.priceVsVwap < 0.8) {
+    holdReasons.push('Still in healthy VWAP zone');
+  } else if (direction === 'short' && metrics.priceVsVwap < -0.1 && metrics.priceVsVwap > -0.8) {
+    holdReasons.push('Still in healthy VWAP zone');
+  }
+  if (metrics.volTrend != null && metrics.volTrend > 1.1) {
+    holdReasons.push('Volume still building');
+  }
+  if ((direction === 'long' && metrics.macdHist > 0 && metrics.macdHistRising) || (direction === 'short' && metrics.macdHist < 0 && metrics.macdHistRising)) {
+    holdReasons.push('Momentum still accelerating');
+  }
+  if (metrics.atrUsedPct && metrics.atrUsedPct < 60) {
+    holdReasons.push(`${(100 - metrics.atrUsedPct).toFixed(0)}% of daily range still available`);
+  }
+
+  // Determine signal
+  let exitSignal, exitClass;
+  if (exitScore >= 50) {
+    exitSignal = 'EXIT';
+    exitClass = 'exit';
+  } else if (exitScore >= 25) {
+    exitSignal = 'CAUTION';
+    exitClass = 'caution';
+  } else {
+    exitSignal = 'HOLD';
+    exitClass = 'hold';
+  }
+
+  return {
+    signal: exitSignal,
+    exitClass,
+    exitReasons: exitScore >= 25 ? exitReasons : [],
+    holdReasons: exitScore < 50 ? holdReasons : [],
+    pnl: { underlyingMove, leveragedMove },
+    stopPrice
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
 // UI RENDERING
 // ═══════════════════════════════════════════════════════════════
 
@@ -1190,6 +1401,84 @@ function renderCard(data, sectorData) {
         <span class="dot ${sDir}"></span>
         Reference: ${sectorData.sym} ${sSign}${sectorData.change.toFixed(2)}%
         — ${confirms ? 'confirms' : 'does NOT confirm'} the move
+      </div>`;
+  }
+
+  // ── Position Tracker ──
+  const positions = getPositions();
+  const pos = positions[sym];
+
+  if (pos) {
+    // Active position — show P&L and exit signals
+    const exitData = calcExitSignal(pos, data, sectorData);
+    const pnlClass = exitData.pnl.leveragedMove >= 0 ? 'profit' : 'loss';
+    const pnlSign = exitData.pnl.leveragedMove >= 0 ? '+' : '';
+    const underSign = exitData.pnl.underlyingMove >= 0 ? '+' : '';
+
+    html += `
+      <div class="position-bar in-trade">
+        <div class="pos-active">
+          <div class="pos-header">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="pos-ticker-badge">${pos.ticker}</span>
+              <span class="pos-direction ${pos.direction}">${pos.direction}</span>
+              ${pos.leverage > 1 ? `<span class="pos-leverage-note">${pos.leverage}x</span>` : ''}
+            </div>
+            <button class="pos-btn pos-btn-exit" onclick="exitPosition('${sym}')">Close Position</button>
+          </div>
+          <div class="pos-pnl-row">
+            <span class="pos-entry-label">Entry:</span>
+            <span class="pos-entry-price">$${pos.entryPrice.toFixed(2)}</span>
+            <span class="pos-pnl ${pnlClass}">${pnlSign}${exitData.pnl.leveragedMove.toFixed(2)}%</span>
+            ${pos.leverage > 1 ? `<span class="pos-leverage-note">(${sym} ${underSign}${exitData.pnl.underlyingMove.toFixed(2)}%)</span>` : ''}
+          </div>
+          ${exitData.stopPrice ? `<div class="pos-stop">Trailing stop: $${exitData.stopPrice.toFixed(2)} (0.75× ATR)</div>` : ''}
+        </div>
+      </div>`;
+
+    // Exit signal
+    const exitIcon = exitData.signal === 'EXIT' ? '🚪' : exitData.signal === 'CAUTION' ? '⚠' : '✓';
+    const reasons = exitData.signal === 'HOLD' ? exitData.holdReasons : exitData.exitReasons;
+    if (reasons.length > 0) {
+      html += `
+        <div class="exit-signal ${exitData.exitClass}">
+          <span class="exit-icon">${exitIcon}</span>
+          <div>
+            <strong>${exitData.signal}</strong> — ${reasons.join('. ')}.
+          </div>
+        </div>`;
+    }
+  } else {
+    // No position — show entry form
+    // Default ticker suggestion based on signal
+    let suggestedTicker = sym;
+    const sInfo = SYMBOL_INFO[sym];
+    // For index/sector ETFs, suggest the leveraged version
+    if (signal === 'BUY' || signal === 'SELL') {
+      // Find leveraged tickers that reference this symbol
+      const leveragedOptions = Object.entries(SYMBOL_INFO).filter(([t, info]) =>
+        info.underlying === sym && info.leverage > 1
+      );
+      if (leveragedOptions.length > 0) {
+        if (signal === 'BUY') {
+          const bull = leveragedOptions.find(([t, info]) => info.direction === 'bull');
+          if (bull) suggestedTicker = bull[0];
+        } else {
+          const bear = leveragedOptions.find(([t, info]) => info.direction === 'bear');
+          if (bear) suggestedTicker = bear[0];
+        }
+      }
+    }
+
+    html += `
+      <div class="position-bar">
+        <div class="pos-entry-form">
+          <label>Trade:</label>
+          <input type="text" class="pos-input pos-ticker-input" id="pos-ticker-${sym}" placeholder="${suggestedTicker}" value="${suggestedTicker !== sym ? suggestedTicker : ''}" maxlength="8">
+          <label>@</label>
+          <input type="number" class="pos-input" id="pos-price-${sym}" placeholder="Entry $" step="0.01">
+          <button class="pos-btn pos-btn-enter" onclick="enterPosition('${sym}')">Enter</button>
+        </div>
       </div>`;
   }
 
@@ -1530,6 +1819,11 @@ initDragAndDrop();
 renderCustomPresetButtons();
 if (watchlist.length > 0) {
   renderAll();
+}
+
+// PWA Service Worker
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 </script>
 </body>
