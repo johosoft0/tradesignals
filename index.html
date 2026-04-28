@@ -83,6 +83,24 @@ body{min-height:100vh;padding:20px 16px 60px;}
 .card-refresh:hover{color:var(--blue);background:var(--blue-bg);}
 .card-refresh.spinning{animation:spin 0.8s linear infinite;pointer-events:none;color:var(--blue);}
 .card-actions{display:flex;gap:2px;align-items:center;}
+.card-move{background:none;border:none;color:var(--text3);cursor:pointer;font-size:0.75rem;padding:2px 5px;border-radius:4px;transition:all 0.15s;line-height:1;}
+.card-move:hover{color:var(--text);background:var(--bg3);}
+.card-move:disabled{opacity:0.2;cursor:default;pointer-events:none;}
+.card-move-group{display:flex;flex-direction:column;gap:0;}
+
+/* Drag state */
+.card.dragging{opacity:0.4;transform:scale(0.97);}
+.card.drag-over{border-color:var(--blue) !important;box-shadow:0 0 16px rgba(59,130,246,0.2) !important;}
+
+/* Custom presets */
+.preset-btn.custom{background:var(--bg3);border-color:rgba(59,130,246,0.3);color:var(--blue);}
+.preset-btn.custom:hover{background:var(--bg4);}
+.preset-delete{margin-left:4px;font-size:0.65rem;opacity:0.5;cursor:pointer;}
+.preset-delete:hover{opacity:1;color:var(--red);}
+.save-preset-bar{display:flex;align-items:center;gap:6px;}
+.preset-name-input{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:0.78rem;width:130px;outline:none;font-family:var(--font);}
+.preset-name-input:focus{border-color:var(--blue);}
+.preset-name-input::placeholder{color:var(--text3);}
 
 /* Signal badge */
 .signal-row{padding:0 18px 14px;display:flex;align-items:center;gap:12px;}
@@ -201,6 +219,12 @@ body{min-height:100vh;padding:20px 16px 60px;}
     <button class="preset-btn" onclick="loadPreset('defense')">Defense</button>
     <button class="preset-btn" onclick="loadPreset('energy')">Energy</button>
     <button class="preset-btn" onclick="loadPreset('gold')">Gold</button>
+    <span id="customPresets"></span>
+  </div>
+  <div class="divider"></div>
+  <div class="save-preset-bar">
+    <input type="text" class="preset-name-input" id="presetNameInput" placeholder="Preset name" maxlength="20">
+    <button class="btn btn-sm" onclick="saveCustomPreset()">Save List</button>
   </div>
 </div>
 
@@ -887,13 +911,17 @@ function renderCard(data, sectorData) {
   }
 
   let html = `
-    <div class="card ${sig}" id="card-${sym}">
+    <div class="card ${sig}" id="card-${sym}" draggable="true">
       <div class="card-head">
         <div>
           <div class="card-sym">${sym}</div>
           <div class="card-price">$${price.toFixed(2)} <span class="card-change ${changeClass}">${changeSign}${dayChange.toFixed(2)} (${changeSign}${dayChangePct.toFixed(2)}%)</span></div>
         </div>
         <div class="card-actions">
+          <div class="card-move-group">
+            <button class="card-move" onclick="moveSymbol('${sym}',-1)" title="Move up">▲</button>
+            <button class="card-move" onclick="moveSymbol('${sym}',1)" title="Move down">▼</button>
+          </div>
           <button class="card-refresh" onclick="refreshSymbol('${sym}',this)" title="Refresh">↻</button>
           <button class="card-remove" onclick="removeSymbol('${sym}')" title="Remove">✕</button>
         </div>
@@ -1012,11 +1040,11 @@ function renderCard(data, sectorData) {
 }
 
 function renderLoading(sym) {
-  return `<div class="card" id="card-${sym}"><div class="card-head"><div class="card-sym">${sym}</div></div><div class="card-loading"><div class="spinner"></div>Analyzing...</div></div>`;
+  return `<div class="card" id="card-${sym}" draggable="true"><div class="card-head"><div class="card-sym">${sym}</div></div><div class="card-loading"><div class="spinner"></div>Analyzing...</div></div>`;
 }
 
 function renderError(sym, msg) {
-  return `<div class="card" id="card-${sym}"><div class="card-head"><div class="card-sym">${sym}</div><div class="card-actions"><button class="card-refresh" onclick="refreshSymbol('${sym}',this)" title="Refresh">↻</button><button class="card-remove" onclick="removeSymbol('${sym}')">✕</button></div></div><div class="card-error">${msg}</div></div>`;
+  return `<div class="card" id="card-${sym}" draggable="true"><div class="card-head"><div class="card-sym">${sym}</div><div class="card-actions"><button class="card-refresh" onclick="refreshSymbol('${sym}',this)" title="Refresh">↻</button><button class="card-remove" onclick="removeSymbol('${sym}')">✕</button></div></div><div class="card-error">${msg}</div></div>`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1032,10 +1060,10 @@ function addSymbol() {
   const sym = input.value.trim().toUpperCase();
   if (!sym) return;
   if (watchlist.includes(sym)) { input.value = ''; return; }
-  watchlist.push(sym);
+  watchlist.unshift(sym);
   saveWatchlist();
   input.value = '';
-  analyzeAndRender(sym);
+  analyzeAndRender(sym, 'top');
 }
 
 function removeSymbol(sym) {
@@ -1056,6 +1084,142 @@ function clearAll() {
   document.getElementById('grid').innerHTML = '';
 }
 
+function moveSymbol(sym, dir) {
+  const idx = watchlist.indexOf(sym);
+  if (idx < 0) return;
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= watchlist.length) return;
+  // Swap in watchlist
+  [watchlist[idx], watchlist[newIdx]] = [watchlist[newIdx], watchlist[idx]];
+  saveWatchlist();
+  // Swap cards in DOM
+  const grid = document.getElementById('grid');
+  const cards = [...grid.children];
+  const cardA = document.getElementById(`card-${sym}`);
+  const cardB = cards[newIdx];
+  if (!cardA || !cardB || cardA === cardB) return;
+  // Use insertBefore to swap
+  if (dir === -1) {
+    grid.insertBefore(cardA, cardB);
+  } else {
+    grid.insertBefore(cardB, cardA);
+  }
+}
+
+// ── Custom Presets ──
+function getCustomPresets() {
+  return JSON.parse(localStorage.getItem('ts_custom_presets') || '{}');
+}
+
+function saveCustomPresetsToStorage(presets) {
+  localStorage.setItem('ts_custom_presets', JSON.stringify(presets));
+}
+
+function saveCustomPreset() {
+  const input = document.getElementById('presetNameInput');
+  const name = input.value.trim();
+  if (!name) return;
+  if (watchlist.length === 0) return;
+  const presets = getCustomPresets();
+  const key = 'custom_' + name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  presets[key] = { name, symbols: [...watchlist] };
+  saveCustomPresetsToStorage(presets);
+  input.value = '';
+  renderCustomPresetButtons();
+}
+
+function deleteCustomPreset(key, e) {
+  e.stopPropagation();
+  const presets = getCustomPresets();
+  delete presets[key];
+  saveCustomPresetsToStorage(presets);
+  renderCustomPresetButtons();
+}
+
+function loadCustomPreset(key) {
+  const presets = getCustomPresets();
+  const preset = presets[key];
+  if (!preset) return;
+  // Replace current list entirely with the saved preset
+  watchlist = [...preset.symbols];
+  saveWatchlist();
+  renderAll();
+}
+
+function renderCustomPresetButtons() {
+  const container = document.getElementById('customPresets');
+  const presets = getCustomPresets();
+  const keys = Object.keys(presets);
+  if (keys.length === 0) { container.innerHTML = ''; return; }
+  container.innerHTML = keys.map(key => {
+    const p = presets[key];
+    return `<button class="preset-btn custom" onclick="loadCustomPreset('${key}')">${p.name} (${p.symbols.length})<span class="preset-delete" onclick="deleteCustomPreset('${key}',event)" title="Delete preset">✕</span></button>`;
+  }).join('');
+}
+
+// ── Drag and Drop ──
+function initDragAndDrop() {
+  const grid = document.getElementById('grid');
+  let dragSym = null;
+
+  grid.addEventListener('dragstart', e => {
+    const card = e.target.closest('.card');
+    if (!card) return;
+    dragSym = card.id.replace('card-', '');
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragSym);
+  });
+
+  grid.addEventListener('dragend', e => {
+    const card = e.target.closest('.card');
+    if (card) card.classList.remove('dragging');
+    grid.querySelectorAll('.drag-over').forEach(c => c.classList.remove('drag-over'));
+    dragSym = null;
+  });
+
+  grid.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const card = e.target.closest('.card');
+    if (card && !card.classList.contains('dragging')) {
+      grid.querySelectorAll('.drag-over').forEach(c => c.classList.remove('drag-over'));
+      card.classList.add('drag-over');
+    }
+  });
+
+  grid.addEventListener('dragleave', e => {
+    const card = e.target.closest('.card');
+    if (card) card.classList.remove('drag-over');
+  });
+
+  grid.addEventListener('drop', e => {
+    e.preventDefault();
+    grid.querySelectorAll('.drag-over').forEach(c => c.classList.remove('drag-over'));
+    const targetCard = e.target.closest('.card');
+    if (!targetCard || !dragSym) return;
+    const targetSym = targetCard.id.replace('card-', '');
+    if (targetSym === dragSym) return;
+
+    const fromIdx = watchlist.indexOf(dragSym);
+    const toIdx = watchlist.indexOf(targetSym);
+    if (fromIdx < 0 || toIdx < 0) return;
+
+    // Reorder watchlist
+    watchlist.splice(fromIdx, 1);
+    watchlist.splice(toIdx, 0, dragSym);
+    saveWatchlist();
+
+    // Reorder DOM
+    const dragCard = document.getElementById(`card-${dragSym}`);
+    if (fromIdx < toIdx) {
+      targetCard.insertAdjacentElement('afterend', dragCard);
+    } else {
+      grid.insertBefore(dragCard, targetCard);
+    }
+  });
+}
+
 function loadPreset(name) {
   const syms = PRESETS[name];
   let added = 0;
@@ -1067,12 +1231,14 @@ function loadPreset(name) {
   renderAll();
 }
 
-async function analyzeAndRender(sym) {
+async function analyzeAndRender(sym, position) {
   const grid = document.getElementById('grid');
   // Add loading card
   let existingCard = document.getElementById(`card-${sym}`);
   if (existingCard) {
     existingCard.outerHTML = renderLoading(sym);
+  } else if (position === 'top') {
+    grid.insertAdjacentHTML('afterbegin', renderLoading(sym));
   } else {
     grid.insertAdjacentHTML('beforeend', renderLoading(sym));
   }
@@ -1174,9 +1340,11 @@ setInterval(() => {
 }, 180000);
 
 // Boot
+initDragAndDrop();
+renderCustomPresetButtons();
 if (watchlist.length > 0) {
   renderAll();
 }
 </script>
 </body>
-</html>
+  </html>
