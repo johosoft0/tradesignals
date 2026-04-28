@@ -1115,20 +1115,25 @@ function exitPosition(watchSym) {
   refreshSymbol(watchSym);
 }
 
-function calcExitSignal(position, data, sectorData) {
+function calcExitSignal(position, data, sectorData, tradedPrice) {
   const { ticker, entryPrice, direction, leverage } = position;
   const { price, metrics } = data;
 
-  // Calculate P&L on the underlying
-  const underlyingMove = ((price - entryPrice) / entryPrice) * 100;
-  // Approximate leveraged P&L (daily leverage, so this is approximate for multi-day)
-  const leveragedMove = direction === 'long' ? underlyingMove * leverage : -underlyingMove * leverage;
+  // Use the actual traded ticker's price for P&L, not the watched symbol's price
+  const actualPrice = tradedPrice || price;
 
-  // Calculate trailing stop based on ATR
-  const stopDistance = metrics.atr ? metrics.atr * 0.75 : null;
+  // P&L on the actual position
+  const positionMove = ((actualPrice - entryPrice) / entryPrice) * 100;
+  // Underlying move (watched symbol)
+  const underlyingMove = ((price - entryPrice) / entryPrice) * 100;
+
+  // Calculate trailing stop on the TRADED ticker's price
+  // Scale ATR by leverage to approximate the traded ticker's volatility
+  const scaledAtr = metrics.atr ? metrics.atr * leverage : null;
+  const stopDistance = scaledAtr ? scaledAtr * 0.75 : null;
   let stopPrice = null;
   if (stopDistance) {
-    stopPrice = direction === 'long' ? price - stopDistance : price + stopDistance;
+    stopPrice = direction === 'long' ? actualPrice - stopDistance : actualPrice + stopDistance;
   }
 
   // ── Exit signal logic ──
@@ -1191,9 +1196,9 @@ function calcExitSignal(position, data, sectorData) {
   }
 
   // 7. In profit + momentum fading = take profit
-  if (leveragedMove > 2 && exitScore >= 15) {
+  if (positionMove > 2 && exitScore >= 15) {
     exitScore += 10;
-    exitReasons.push(`Up ${leveragedMove.toFixed(1)}% with warning signs — lock in gains`);
+    exitReasons.push(`Up ${positionMove.toFixed(1)}% with warning signs — lock in gains`);
   }
 
   // 8. Reasons to HOLD
@@ -1231,7 +1236,8 @@ function calcExitSignal(position, data, sectorData) {
     exitClass,
     exitReasons: exitScore >= 25 ? exitReasons : [],
     holdReasons: exitScore < 50 ? holdReasons : [],
-    pnl: { underlyingMove, leveragedMove },
+    pnl: { positionMove },
+    tradedPrice: actualPrice,
     stopPrice
   };
 }
@@ -1410,10 +1416,14 @@ function renderCard(data, sectorData) {
 
   if (pos) {
     // Active position — show P&L and exit signals
-    const exitData = calcExitSignal(pos, data, sectorData);
-    const pnlClass = exitData.pnl.leveragedMove >= 0 ? 'profit' : 'loss';
-    const pnlSign = exitData.pnl.leveragedMove >= 0 ? '+' : '';
-    const underSign = exitData.pnl.underlyingMove >= 0 ? '+' : '';
+    const tradedPrice = data._tradedTickerPrice || price; // use fetched traded price, fallback to watched price if same ticker
+    const exitData = calcExitSignal(pos, data, sectorData, pos.ticker !== sym ? tradedPrice : null);
+    const pnlClass = exitData.pnl.positionMove >= 0 ? 'profit' : 'loss';
+    const pnlSign = exitData.pnl.positionMove >= 0 ? '+' : '';
+
+    // Show underlying symbol's day change for context when trading a different ticker
+    const showUnderlying = pos.ticker !== sym;
+    const underlyingDayPct = dayChangePct;
 
     html += `
       <div class="position-bar in-trade">
@@ -1429,8 +1439,9 @@ function renderCard(data, sectorData) {
           <div class="pos-pnl-row">
             <span class="pos-entry-label">Entry:</span>
             <span class="pos-entry-price">$${pos.entryPrice.toFixed(2)}</span>
-            <span class="pos-pnl ${pnlClass}">${pnlSign}${exitData.pnl.leveragedMove.toFixed(2)}%</span>
-            ${pos.leverage > 1 ? `<span class="pos-leverage-note">(${sym} ${underSign}${exitData.pnl.underlyingMove.toFixed(2)}%)</span>` : ''}
+            ${showUnderlying ? `<span class="pos-entry-label">Now:</span><span class="pos-entry-price">$${tradedPrice.toFixed(2)}</span>` : ''}
+            <span class="pos-pnl ${pnlClass}">${pnlSign}${exitData.pnl.positionMove.toFixed(2)}%</span>
+            ${showUnderlying ? `<span class="pos-leverage-note">(${sym} today ${dayChangePct >= 0 ? '+' : ''}${dayChangePct.toFixed(2)}%)</span>` : ''}
           </div>
           ${exitData.stopPrice ? `<div class="pos-stop">Trailing stop: $${exitData.stopPrice.toFixed(2)} (0.75× ATR)</div>` : ''}
         </div>
@@ -1736,6 +1747,18 @@ async function analyzeAndRender(sym, position) {
       }
     }
 
+    // If there's an active position with a different ticker, fetch its current price
+    const positions = getPositions();
+    const activePos = positions[sym];
+    let tradedTickerPrice = null;
+    if (activePos && activePos.ticker !== sym) {
+      const tradedQuote = await getFinnhubQuote(activePos.ticker);
+      if (tradedQuote && tradedQuote.c) {
+        tradedTickerPrice = tradedQuote.c;
+      }
+    }
+    data._tradedTickerPrice = tradedTickerPrice;
+
     const card = document.getElementById(`card-${sym}`);
     if (card) card.outerHTML = renderCard(data, sectorData);
   } catch(e) {
@@ -1827,4 +1850,4 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 </body>
-  </html>
+</html>
