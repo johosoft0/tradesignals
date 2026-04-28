@@ -120,7 +120,7 @@ body{min-height:100vh;padding:20px 16px 60px;}
 .reason-icon.neutral{color:var(--amber);}
 
 /* Metrics row */
-.metrics{padding:0 18px 16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.metrics{padding:0 18px 16px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
 .metric{background:var(--bg3);border-radius:8px;padding:8px 10px;position:relative;cursor:help;}
 .metric-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text3);margin-bottom:2px;}
 .metric-val{font-family:var(--mono);font-size:0.85rem;font-weight:600;}
@@ -589,24 +589,24 @@ function calcRSI(closes, period = 14) {
 function calcMACD(closes) {
   const ema12 = calcEMA(closes, 12);
   const ema26 = calcEMA(closes, 26);
-  if (ema12.length === 0 || ema26.length === 0) return { line: 0, signal: 0, histogram: 0 };
-  // Align lengths
+  if (ema12.length === 0 || ema26.length === 0) return { line: 0, signal: 0, histogram: 0, prevHistogram: 0, histRising: false };
   const offset = ema12.length - ema26.length;
   const macdLine = [];
   for (let i = 0; i < ema26.length; i++) {
     macdLine.push(ema12[i + offset] - ema26[i]);
   }
   const signalLine = calcEMA(macdLine, 9);
-  if (signalLine.length === 0) return { line: macdLine[macdLine.length-1]||0, signal: 0, histogram: 0 };
+  if (signalLine.length === 0) return { line: macdLine[macdLine.length-1]||0, signal: 0, histogram: 0, prevHistogram: 0, histRising: false };
   const ml = macdLine[macdLine.length - 1];
   const sl = signalLine[signalLine.length - 1];
   const prevMl = macdLine.length > 1 ? macdLine[macdLine.length - 2] : ml;
   const prevSl = signalLine.length > 1 ? signalLine[signalLine.length - 2] : sl;
-  return { line: ml, signal: sl, histogram: ml - sl, prevHistogram: prevMl - prevSl };
+  const hist = ml - sl;
+  const prevHist = prevMl - prevSl;
+  return { line: ml, signal: sl, histogram: hist, prevHistogram: prevHist, histRising: Math.abs(hist) > Math.abs(prevHist) && Math.sign(hist) === Math.sign(prevHist) };
 }
 
 function calcVWAP(timestamps, highs, lows, closes, volumes) {
-  // Intraday VWAP: reset each day
   let cumTPV = 0, cumVol = 0;
   let lastDay = -1;
   const vwaps = [];
@@ -622,8 +622,33 @@ function calcVWAP(timestamps, highs, lows, closes, volumes) {
   return vwaps;
 }
 
+function calcATR(highs, lows, closes, period = 14) {
+  if (highs.length < period + 1) return null;
+  let atr = 0;
+  for (let i = 1; i <= period; i++) {
+    const tr = Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i-1]), Math.abs(lows[i] - closes[i-1]));
+    atr += tr;
+  }
+  atr /= period;
+  for (let i = period + 1; i < highs.length; i++) {
+    const tr = Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i-1]), Math.abs(lows[i] - closes[i-1]));
+    atr = (atr * (period - 1) + tr) / period;
+  }
+  return atr;
+}
+
 // ═══════════════════════════════════════════════════════════════
-// SIGNAL ENGINE
+// SIGNAL ENGINE v2 — Tuned for anti-chase, day/swing trades
+//
+// 8 signals, no redundancy. Each answers a distinct question:
+//   1. Volume + volume trend (22) → Is this move real & still building?
+//   2. VWAP position (18) → Am I chasing an extension?
+//   3. Sector confirmation (16) → Does the broader market agree?
+//   4. MACD momentum direction (14) → Is the engine accelerating or dying?
+//   5. ATR remaining (12) → Is there room left to run today?
+//   6. RSI dual timeframe (10) → Am I too late on any timeframe?
+//   7. Trend alignment (10) → Is the overall direction confirmed?
+//   8. Previous day levels (8) → Has a key structural level broken?
 // ═══════════════════════════════════════════════════════════════
 
 async function analyzeSymbol(sym) {
@@ -637,10 +662,11 @@ async function analyzeSymbol(sym) {
     throw new Error('Not enough data — check the symbol');
   }
 
-  const dCloses = daily.indicators.quote[0].close.filter(v => v != null);
-  const dHighs = daily.indicators.quote[0].high.filter(v => v != null);
-  const dLows = daily.indicators.quote[0].low.filter(v => v != null);
-  const dVolumes = daily.indicators.quote[0].volume.filter(v => v != null);
+  const dq = daily.indicators.quote[0];
+  const dCloses = dq.close.filter(v => v != null);
+  const dHighs = dq.high.filter(v => v != null);
+  const dLows = dq.low.filter(v => v != null);
+  const dVolumes = dq.volume.filter(v => v != null);
 
   // Current price
   let price = fhQuote?.c || dCloses[dCloses.length - 1];
@@ -650,12 +676,13 @@ async function analyzeSymbol(sym) {
   let dayHigh = fhQuote?.h || dHighs[dHighs.length - 1];
   let dayLow = fhQuote?.l || dLows[dLows.length - 1];
 
-  // ── Daily indicators ──
+  // ── Calculate everything ──
   const ema9 = calcEMA(dCloses, 9);
   const ema21 = calcEMA(dCloses, 21);
   const sma20 = calcSMA(dCloses, 20);
-  const rsi = calcRSI(dCloses, 14);
+  const dailyRsi = calcRSI(dCloses, 14);
   const macd = calcMACD(dCloses);
+  const atr = calcATR(dHighs, dLows, dCloses, 14);
 
   const curEma9 = ema9[ema9.length - 1];
   const curEma21 = ema21[ema21.length - 1];
@@ -663,193 +690,304 @@ async function analyzeSymbol(sym) {
   const prevEma9 = ema9.length > 1 ? ema9[ema9.length - 2] : curEma9;
   const prevEma21 = ema21.length > 1 ? ema21[ema21.length - 2] : curEma21;
 
-  // Previous day high/low
   const prevDayHigh = dHighs[dHighs.length - 2];
   const prevDayLow = dLows[dLows.length - 2];
 
-  // Average volume (20-day)
+  // Volume: 20-day average
   const recentVols = dVolumes.slice(-21, -1);
   const avgVol = recentVols.reduce((a, b) => a + b, 0) / recentVols.length;
   const todayVol = dVolumes[dVolumes.length - 1];
   const relVol = todayVol / avgVol;
 
-  // Average daily range (20-day)
-  const ranges = [];
-  for (let i = dHighs.length - 21; i < dHighs.length - 1; i++) {
-    if (i >= 0) ranges.push(dHighs[i] - dLows[i]);
-  }
-  const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+  // Today's range vs ATR
   const todayRange = dayHigh - dayLow;
-  const rangeExpansion = todayRange / avgRange;
+  const atrRemaining = atr ? Math.max(0, 1 - (todayRange / atr)) : null;
+  const atrUsedPct = atr ? (todayRange / atr) * 100 : null;
 
-  // Intraday VWAP
-  let vwap = null;
-  let priceVsVwap = 0;
-  if (intraday && intraday.timestamp && intraday.timestamp.length > 2) {
+  // Intraday data: VWAP, volume trend, 30m RSI
+  let vwap = null, priceVsVwap = 0, volTrend = null, intradayRsi = null;
+  if (intraday && intraday.timestamp && intraday.timestamp.length > 4) {
     const iq = intraday.indicators.quote[0];
     const iTs = intraday.timestamp;
     const iH = iq.high, iL = iq.low, iC = iq.close, iV = iq.volume;
+
+    // VWAP
     const vwaps = calcVWAP(iTs, iH, iL, iC, iV);
     vwap = vwaps[vwaps.length - 1];
     priceVsVwap = ((price - vwap) / vwap) * 100;
+
+    // Volume trend: compare last 3 bars' average volume to the 3 before that
+    const cleanVols = iV.filter(v => v != null && v > 0);
+    if (cleanVols.length >= 6) {
+      const recent3 = cleanVols.slice(-3).reduce((a,b) => a+b, 0) / 3;
+      const prior3 = cleanVols.slice(-6, -3).reduce((a,b) => a+b, 0) / 3;
+      volTrend = prior3 > 0 ? (recent3 / prior3) : null;
+    }
+
+    // 30-minute RSI
+    const cleanCloses = iC.filter(v => v != null);
+    if (cleanCloses.length > 14) {
+      intradayRsi = calcRSI(cleanCloses, 14);
+    }
   }
 
   // ── SCORING ──
-  // Each signal contributes a weighted score: positive = bullish, negative = bearish
   const signals = [];
   let totalScore = 0;
-  const weights = {
-    vwap: 15,
-    ema_trend: 12,
-    ema_cross: 10,
-    sma20: 10,
-    rsi: 12,
-    macd: 12,
-    volume: 13,
-    range: 8,
-    prevDay: 8,
-  };
+  const W = { volume: 22, vwap: 18, sector: 16, macd: 14, atr: 12, rsi: 10, trend: 10, prevDay: 8 };
+  const maxPossible = Object.values(W).reduce((a, b) => a + b, 0); // 110
 
-  // 1. VWAP
-  if (vwap != null) {
-    if (priceVsVwap > 0.15) {
-      totalScore += weights.vwap;
-      signals.push({ text: `Price above VWAP by ${priceVsVwap.toFixed(2)}%`, type: 'bull' });
-    } else if (priceVsVwap < -0.15) {
-      totalScore -= weights.vwap;
-      signals.push({ text: `Price below VWAP by ${Math.abs(priceVsVwap).toFixed(2)}%`, type: 'bear' });
-    } else {
-      signals.push({ text: 'Price hugging VWAP — no edge', type: 'neutral' });
-    }
-    // Guard: extended too far from VWAP
-    if (Math.abs(priceVsVwap) > 1.5) {
-      signals.push({ text: `Extended ${priceVsVwap > 0 ? 'above' : 'below'} VWAP (${Math.abs(priceVsVwap).toFixed(1)}%) — caution on entries`, type: 'neutral' });
-      totalScore *= 0.7; // penalize extended moves
+  // ────────────────────────────────────────
+  // 1. VOLUME + VOLUME TREND (22)
+  // Two-part: is overall volume strong, and is it building or fading?
+  // ────────────────────────────────────────
+  let volScore = 0;
+
+  // Part A: Relative volume (0 to ~13)
+  if (relVol >= 1.5) {
+    volScore += W.volume * 0.6;
+    signals.push({ text: `Volume ${relVol.toFixed(1)}x average — strong participation`, type: dayChange >= 0 ? 'bull' : 'bear' });
+  } else if (relVol >= 1.0) {
+    volScore += W.volume * 0.25;
+  } else if (relVol < 0.6) {
+    volScore -= W.volume * 0.3;
+    signals.push({ text: `Volume only ${relVol.toFixed(1)}x average — nobody's trading this`, type: 'neutral' });
+  }
+
+  // Part B: Volume trend — is money still coming in or drying up? (0 to ~9)
+  if (volTrend != null) {
+    if (volTrend > 1.2) {
+      volScore += W.volume * 0.4;
+      signals.push({ text: `Volume building — last 3 bars ${volTrend.toFixed(1)}x the prior 3`, type: dayChange >= 0 ? 'bull' : 'bear' });
+    } else if (volTrend < 0.6) {
+      volScore -= W.volume * 0.4;
+      signals.push({ text: `Volume fading — buyers/sellers drying up (${volTrend.toFixed(1)}x prior bars)`, type: 'neutral' });
     }
   }
 
-  // 2. EMA 9/21 direction
+  // Volume confirms the direction of the existing move
+  if (dayChange >= 0) totalScore += volScore;
+  else totalScore -= Math.abs(volScore);
+
+  // ────────────────────────────────────────
+  // 2. VWAP POSITION (18)
+  // Steeper extension penalty to prevent chasing
+  // ────────────────────────────────────────
+  if (vwap != null) {
+    const absExt = Math.abs(priceVsVwap);
+
+    if (absExt < 0.1) {
+      signals.push({ text: 'Sitting right at VWAP — no directional edge yet', type: 'neutral' });
+    } else if (priceVsVwap > 0) {
+      // Bullish side
+      if (absExt <= 0.7) {
+        totalScore += W.vwap;
+        signals.push({ text: `Above VWAP by ${priceVsVwap.toFixed(2)}% — healthy buyers' zone`, type: 'bull' });
+      } else if (absExt <= 1.2) {
+        totalScore += W.vwap * 0.3;
+        signals.push({ text: `Extended above VWAP (${priceVsVwap.toFixed(2)}%) — getting stretched`, type: 'neutral' });
+      } else {
+        totalScore -= W.vwap * 0.5;
+        signals.push({ text: `Way above VWAP (${priceVsVwap.toFixed(2)}%) — chase territory, don't enter long here`, type: 'bear' });
+      }
+    } else {
+      // Bearish side
+      if (absExt <= 0.7) {
+        totalScore -= W.vwap;
+        signals.push({ text: `Below VWAP by ${absExt.toFixed(2)}% — sellers in control`, type: 'bear' });
+      } else if (absExt <= 1.2) {
+        totalScore -= W.vwap * 0.3;
+        signals.push({ text: `Extended below VWAP (${absExt.toFixed(2)}%) — getting stretched`, type: 'neutral' });
+      } else {
+        totalScore += W.vwap * 0.5;
+        signals.push({ text: `Way below VWAP (${absExt.toFixed(2)}%) — chase territory, don't enter short here`, type: 'bull' });
+      }
+    }
+  }
+
+  // ────────────────────────────────────────
+  // 3. SECTOR CONFIRMATION (16) — scored inside analyzeAndRender
+  //    (needs async sector data, applied after this function returns)
+  // ────────────────────────────────────────
+
+  // ────────────────────────────────────────
+  // 4. MACD MOMENTUM DIRECTION (14)
+  // Not just positive/negative — is the histogram growing or shrinking?
+  // ────────────────────────────────────────
+  const hist = macd.histogram;
+  const prevHist = macd.prevHistogram;
+  const histGrowing = macd.histRising;
+
+  if (hist > 0 && prevHist <= 0) {
+    // Fresh flip positive
+    totalScore += W.macd;
+    signals.push({ text: 'MACD just flipped bullish — fresh momentum starting', type: 'bull' });
+  } else if (hist < 0 && prevHist >= 0) {
+    // Fresh flip negative
+    totalScore -= W.macd;
+    signals.push({ text: 'MACD just flipped bearish — momentum reversing', type: 'bear' });
+  } else if (hist > 0 && histGrowing) {
+    totalScore += W.macd * 0.7;
+    signals.push({ text: 'MACD positive and accelerating — momentum building', type: 'bull' });
+  } else if (hist > 0 && !histGrowing) {
+    totalScore += W.macd * 0.1;
+    signals.push({ text: 'MACD positive but shrinking — momentum fading even though price is up', type: 'neutral' });
+  } else if (hist < 0 && histGrowing) {
+    totalScore -= W.macd * 0.7;
+    signals.push({ text: 'MACD negative and accelerating down — selling intensifying', type: 'bear' });
+  } else if (hist < 0 && !histGrowing) {
+    totalScore -= W.macd * 0.1;
+    signals.push({ text: 'MACD negative but improving — selling pressure easing', type: 'neutral' });
+  }
+
+  // ────────────────────────────────────────
+  // 5. ATR REMAINING (12)
+  // How much of the typical daily range has been used up?
+  // ────────────────────────────────────────
+  if (atrUsedPct != null) {
+    if (atrUsedPct < 40) {
+      totalScore += W.atr * 0.7 * (totalScore > 0 ? 1 : -1);
+      signals.push({ text: `Only ${atrUsedPct.toFixed(0)}% of typical daily range used — plenty of room to move`, type: totalScore > 0 ? 'bull' : 'bear' });
+    } else if (atrUsedPct < 70) {
+      totalScore += W.atr * 0.3 * (totalScore > 0 ? 1 : -1);
+    } else if (atrUsedPct < 90) {
+      signals.push({ text: `${atrUsedPct.toFixed(0)}% of daily range used up — move is mostly done`, type: 'neutral' });
+    } else {
+      totalScore *= 0.7;
+      signals.push({ text: `${atrUsedPct.toFixed(0)}% of daily range consumed — statistically running on fumes`, type: 'neutral' });
+    }
+  }
+
+  // ────────────────────────────────────────
+  // 6. RSI DUAL TIMEFRAME (10)
+  // Daily for context, 30m for right-now exhaustion
+  // ────────────────────────────────────────
+  let rsiScore = 0;
+  const bestRsi = intradayRsi || dailyRsi; // prefer intraday
+
+  // Daily RSI — context
+  if (dailyRsi != null) {
+    if (dailyRsi >= 70) {
+      rsiScore -= W.rsi * 0.5;
+      signals.push({ text: `Daily momentum overheated (RSI ${dailyRsi.toFixed(0)}) — pullback risk`, type: 'bear' });
+    } else if (dailyRsi >= 60) {
+      rsiScore += W.rsi * 0.2;
+    } else if (dailyRsi <= 30) {
+      rsiScore += W.rsi * 0.3;
+      signals.push({ text: `Daily momentum washed out (RSI ${dailyRsi.toFixed(0)}) — bounce zone`, type: 'bull' });
+    } else if (dailyRsi <= 40) {
+      rsiScore -= W.rsi * 0.3;
+    }
+  }
+
+  // Intraday RSI — timing
+  if (intradayRsi != null) {
+    if (intradayRsi >= 75) {
+      rsiScore -= W.rsi * 0.5;
+      signals.push({ text: `30-min momentum maxed out (RSI ${intradayRsi.toFixed(0)}) — don't enter now`, type: 'bear' });
+    } else if (intradayRsi >= 65) {
+      rsiScore -= W.rsi * 0.2;
+      signals.push({ text: `30-min momentum getting hot (RSI ${intradayRsi.toFixed(0)}) — late for entries`, type: 'neutral' });
+    } else if (intradayRsi <= 30) {
+      rsiScore += W.rsi * 0.4;
+      signals.push({ text: `30-min momentum oversold (RSI ${intradayRsi.toFixed(0)}) — bounce setup`, type: 'bull' });
+    } else if (intradayRsi >= 40 && intradayRsi <= 58) {
+      rsiScore += W.rsi * 0.3;
+      if (dailyRsi != null && dailyRsi >= 40 && dailyRsi <= 60) {
+        signals.push({ text: `Both timeframes in sweet spot (daily ${dailyRsi.toFixed(0)}, 30m ${intradayRsi.toFixed(0)}) — good entry timing`, type: 'bull' });
+      }
+    }
+  } else if (dailyRsi != null && dailyRsi >= 40 && dailyRsi <= 60) {
+    rsiScore += W.rsi * 0.3;
+    signals.push({ text: `Daily momentum in entry zone (RSI ${dailyRsi.toFixed(0)})`, type: 'bull' });
+  }
+
+  totalScore += rsiScore;
+
+  // ────────────────────────────────────────
+  // 7. TREND ALIGNMENT (10)
+  // Single consolidated read: EMA 9 vs 21 direction + price vs SMA 20
+  // ────────────────────────────────────────
   const ema9Rising = curEma9 > prevEma9;
   const ema21Rising = curEma21 > prevEma21;
-  if (ema9Rising && ema21Rising) {
-    totalScore += weights.ema_trend;
-    signals.push({ text: 'Short-term and medium-term trends both rising', type: 'bull' });
-  } else if (!ema9Rising && !ema21Rising) {
-    totalScore -= weights.ema_trend;
-    signals.push({ text: 'Short-term and medium-term trends both falling', type: 'bear' });
+  const aboveSma20 = price > curSma20;
+  const ema9Above21 = curEma9 > curEma21;
+
+  let trendBull = 0;
+  if (ema9Rising) trendBull++;
+  if (ema21Rising) trendBull++;
+  if (aboveSma20) trendBull++;
+  if (ema9Above21) trendBull++;
+
+  if (trendBull >= 4) {
+    totalScore += W.trend;
+    signals.push({ text: 'Fully confirmed uptrend — fast & slow moving averages rising, price above all', type: 'bull' });
+  } else if (trendBull === 3) {
+    totalScore += W.trend * 0.5;
+    signals.push({ text: 'Mostly bullish trend — one minor disagreement', type: 'bull' });
+  } else if (trendBull <= 0) {
+    totalScore -= W.trend;
+    signals.push({ text: 'Fully confirmed downtrend — all moving averages bearish', type: 'bear' });
+  } else if (trendBull === 1) {
+    totalScore -= W.trend * 0.5;
+    signals.push({ text: 'Mostly bearish trend — one minor bright spot', type: 'bear' });
   } else {
-    signals.push({ text: 'Trends mixed — short vs medium disagree', type: 'neutral' });
+    signals.push({ text: 'Trend is mixed — no clear direction from moving averages', type: 'neutral' });
   }
 
-  // 3. EMA cross
-  if (curEma9 > curEma21 && prevEma9 <= prevEma21) {
-    totalScore += weights.ema_cross;
-    signals.push({ text: 'Bullish crossover: fast trend crossed above slow', type: 'bull' });
-  } else if (curEma9 < curEma21 && prevEma9 >= prevEma21) {
-    totalScore -= weights.ema_cross;
-    signals.push({ text: 'Bearish crossover: fast trend crossed below slow', type: 'bear' });
-  } else if (curEma9 > curEma21) {
-    totalScore += weights.ema_cross * 0.5;
-  } else {
-    totalScore -= weights.ema_cross * 0.5;
-  }
-
-  // 4. SMA 20 trend
-  if (price > curSma20) {
-    totalScore += weights.sma20;
-    signals.push({ text: `Price above 20-day average ($${curSma20.toFixed(2)})`, type: 'bull' });
-  } else {
-    totalScore -= weights.sma20;
-    signals.push({ text: `Price below 20-day average ($${curSma20.toFixed(2)})`, type: 'bear' });
-  }
-
-  // 5. RSI
-  if (rsi != null) {
-    if (rsi > 70) {
-      totalScore -= weights.rsi * 0.8;
-      signals.push({ text: `Momentum stretched high (RSI ${rsi.toFixed(0)}) — pullback risk`, type: 'bear' });
-    } else if (rsi > 55) {
-      totalScore += weights.rsi;
-      signals.push({ text: `Healthy upward momentum (RSI ${rsi.toFixed(0)})`, type: 'bull' });
-    } else if (rsi < 30) {
-      totalScore += weights.rsi * 0.5;
-      signals.push({ text: `Washed out (RSI ${rsi.toFixed(0)}) — bounce possible`, type: 'bull' });
-    } else if (rsi < 45) {
-      totalScore -= weights.rsi;
-      signals.push({ text: `Weak momentum (RSI ${rsi.toFixed(0)})`, type: 'bear' });
-    } else {
-      signals.push({ text: `Momentum flat/neutral (RSI ${rsi.toFixed(0)})`, type: 'neutral' });
-    }
-  }
-
-  // 6. MACD histogram
-  if (macd.histogram > 0 && macd.prevHistogram <= 0) {
-    totalScore += weights.macd;
-    signals.push({ text: 'MACD just flipped positive — fresh momentum', type: 'bull' });
-  } else if (macd.histogram < 0 && macd.prevHistogram >= 0) {
-    totalScore -= weights.macd;
-    signals.push({ text: 'MACD just flipped negative — momentum fading', type: 'bear' });
-  } else if (macd.histogram > 0) {
-    totalScore += weights.macd * 0.5;
-  } else {
-    totalScore -= weights.macd * 0.5;
-  }
-
-  // 7. Relative Volume
-  if (relVol > 1.5) {
-    totalScore += weights.volume * (totalScore > 0 ? 1 : -1); // volume confirms direction
-    signals.push({ text: `Volume ${relVol.toFixed(1)}x normal — big money in play`, type: totalScore > 0 ? 'bull' : 'bear' });
-  } else if (relVol < 0.6) {
-    totalScore *= 0.6; // weak volume kills conviction
-    signals.push({ text: `Volume only ${relVol.toFixed(1)}x normal — low conviction`, type: 'neutral' });
-  }
-
-  // 8. Range expansion
-  if (rangeExpansion > 1.3) {
-    signals.push({ text: `Range expanded ${rangeExpansion.toFixed(1)}x average — volatility up`, type: totalScore > 0 ? 'bull' : 'bear' });
-  } else if (rangeExpansion < 0.5) {
-    totalScore *= 0.8;
-    signals.push({ text: 'Tight range — choppy, no clear direction', type: 'neutral' });
-  }
-
-  // 9. Previous day levels
+  // ────────────────────────────────────────
+  // 8. PREVIOUS DAY LEVELS (8)
+  // ────────────────────────────────────────
   if (price > prevDayHigh) {
-    totalScore += weights.prevDay;
-    signals.push({ text: `Broke above yesterday's high ($${prevDayHigh.toFixed(2)})`, type: 'bull' });
+    totalScore += W.prevDay;
+    signals.push({ text: `Broke above yesterday's high ($${prevDayHigh.toFixed(2)}) — structural breakout`, type: 'bull' });
   } else if (price < prevDayLow) {
-    totalScore -= weights.prevDay;
-    signals.push({ text: `Broke below yesterday's low ($${prevDayLow.toFixed(2)})`, type: 'bear' });
+    totalScore -= W.prevDay;
+    signals.push({ text: `Broke below yesterday's low ($${prevDayLow.toFixed(2)}) — structural breakdown`, type: 'bear' });
   }
 
-  // ── GUARDRAILS ──
+  // ════════════════════════════════════════
+  // GUARDRAILS — hard blocks for bad entries
+  // ════════════════════════════════════════
   let blockers = [];
 
-  // Flat chop: tight range + low volume
-  if (rangeExpansion < 0.6 && relVol < 0.8) {
-    blockers.push('Dead zone — range and volume both low. Wait for a breakout.');
-    totalScore *= 0.4;
-  }
-
-  // Exhaustion spike: big move + overbought RSI + extended from VWAP
-  if (rsi > 75 && priceVsVwap > 1.2 && rangeExpansion > 1.5) {
-    blockers.push('Looks like an exhaustion spike — price stretched far on high momentum. Don\'t chase.');
+  // Dead zone: low range + low volume
+  if (atrUsedPct != null && atrUsedPct < 30 && relVol < 0.7) {
+    blockers.push('Dead zone — tiny range on light volume. Nothing to trade here.');
     totalScore *= 0.3;
   }
 
-  // Countertrend with no volume
-  if (Math.abs(totalScore) < 15 && relVol < 0.7) {
+  // Exhaustion spike: overbought RSI + far from VWAP + range mostly consumed
+  if ((bestRsi && bestRsi > 75) && Math.abs(priceVsVwap) > 1.0 && atrUsedPct > 80) {
+    blockers.push('Exhaustion spike — momentum maxed, price stretched, range used up. This is where reversals happen.');
+    totalScore *= 0.2;
+  }
+
+  // Chase trap: volume fading + extended from VWAP (the exact pattern that burns you)
+  if (volTrend != null && volTrend < 0.65 && Math.abs(priceVsVwap) > 0.7) {
+    blockers.push('Volume drying up while price is extended from VWAP. The move is over — entering now is chasing.');
+    totalScore *= 0.3;
+  }
+
+  // Range exhaustion: already used 90%+ of daily range
+  if (atrUsedPct != null && atrUsedPct > 90 && Math.abs(totalScore) > 15) {
+    blockers.push(`Today's range is ${atrUsedPct.toFixed(0)}% consumed. Even if direction is right, there's no room left.`);
+    totalScore *= 0.4;
+  }
+
+  // Low conviction: no clear direction + weak volume
+  if (Math.abs(totalScore) < 12 && relVol < 0.7) {
     blockers.push('No clear direction with weak volume. Stay out.');
   }
 
   // ── FINAL SIGNAL ──
-  const maxPossible = Object.values(weights).reduce((a, b) => a + b, 0);
   const normalizedScore = (totalScore / maxPossible) * 100;
   let signal, confidence;
 
-  if (normalizedScore > 20 && blockers.length === 0) {
+  if (normalizedScore > 18 && blockers.length === 0) {
     signal = 'BUY';
     confidence = Math.min(95, Math.round(30 + normalizedScore * 0.65));
-  } else if (normalizedScore < -20 && blockers.length === 0) {
+  } else if (normalizedScore < -18 && blockers.length === 0) {
     signal = 'SELL';
     confidence = Math.min(95, Math.round(30 + Math.abs(normalizedScore) * 0.65));
   } else {
@@ -857,17 +995,19 @@ async function analyzeSymbol(sym) {
     confidence = Math.round(40 + Math.abs(normalizedScore) * 0.3);
   }
 
-  // For inverse ETFs, flip the signal label
   const isInverse = IS_INVERSE.has(sym);
 
   return {
     sym, price, dayChange, dayChangePct, dayHigh, dayLow,
     signal, confidence, signals, blockers, isInverse,
+    totalScore, maxPossible, normalizedScore,
     metrics: {
       vwap, priceVsVwap,
-      ema9: curEma9, ema21: curEma21, sma20: curSma20,
-      rsi, macdHist: macd.histogram,
-      relVol, rangeExpansion,
+      relVol, volTrend,
+      dailyRsi, intradayRsi,
+      macdHist: macd.histogram, macdHistRising: histGrowing,
+      atrUsedPct, atr, todayRange,
+      trendBull, ema9: curEma9, ema21: curEma21, sma20: curSma20,
       prevDayHigh, prevDayLow
     }
   };
@@ -977,45 +1117,66 @@ function renderCard(data, sectorData) {
   });
   html += `</div>`;
 
-  // Metrics
-  const vwapClass = metrics.priceVsVwap > 0.15 ? 'bull' : metrics.priceVsVwap < -0.15 ? 'bear' : 'neutral';
-  const rsiClass = metrics.rsi > 55 ? 'bull' : metrics.rsi < 45 ? 'bear' : 'neutral';
+  // Metrics — new indicator set
+  const vwapClass = !metrics.vwap ? 'neutral' : (Math.abs(metrics.priceVsVwap) > 1.2 ? 'bear' : metrics.priceVsVwap > 0.1 ? 'bull' : metrics.priceVsVwap < -0.1 ? 'bear' : 'neutral');
   const volClass = metrics.relVol > 1.3 ? 'bull' : metrics.relVol < 0.7 ? 'bear' : 'neutral';
-  const macdClass = metrics.macdHist > 0 ? 'bull' : 'bear';
-  const emaClass = metrics.ema9 > metrics.ema21 ? 'bull' : 'bear';
-  const rangeClass = metrics.rangeExpansion > 1.2 ? 'bull' : metrics.rangeExpansion < 0.6 ? 'bear' : 'neutral';
+  const volTrendClass = metrics.volTrend == null ? 'neutral' : (metrics.volTrend > 1.15 ? 'bull' : metrics.volTrend < 0.7 ? 'bear' : 'neutral');
+  const macdClass = metrics.macdHist > 0 ? (metrics.macdHistRising ? 'bull' : 'neutral') : (metrics.macdHistRising ? 'bear' : 'neutral');
+  const atrClass = metrics.atrUsedPct == null ? 'neutral' : (metrics.atrUsedPct < 50 ? 'bull' : metrics.atrUsedPct > 80 ? 'bear' : 'neutral');
+  const rsiVal = metrics.intradayRsi || metrics.dailyRsi;
+  const rsiClass = !rsiVal ? 'neutral' : (rsiVal >= 65 ? 'bear' : rsiVal <= 35 ? 'bull' : rsiVal >= 40 && rsiVal <= 58 ? 'bull' : 'neutral');
+  const trendClass = metrics.trendBull >= 3 ? 'bull' : metrics.trendBull <= 1 ? 'bear' : 'neutral';
+  const trendLabel = metrics.trendBull >= 4 ? '▲ Strong' : metrics.trendBull === 3 ? '▲ Mostly' : metrics.trendBull <= 0 ? '▼ Strong' : metrics.trendBull === 1 ? '▼ Mostly' : '— Mixed';
+
+  // RSI display: show both if available
+  let rsiDisplay = 'N/A';
+  if (metrics.intradayRsi && metrics.dailyRsi) {
+    rsiDisplay = `${metrics.intradayRsi.toFixed(0)} / ${metrics.dailyRsi.toFixed(0)}`;
+  } else if (metrics.dailyRsi) {
+    rsiDisplay = metrics.dailyRsi.toFixed(0);
+  }
 
   html += `
       <div class="metrics">
         <div class="metric">
           <div class="metric-label">VWAP</div>
           <div class="metric-val ${vwapClass}">${metrics.vwap ? (metrics.priceVsVwap > 0 ? '+' : '') + metrics.priceVsVwap.toFixed(2) + '%' : 'N/A'}</div>
-          <div class="tip">Shows where price sits relative to the day's average price weighted by volume. Above VWAP means buyers are in control. Below means sellers. Being way too far above can mean the move is stretched.</div>
+          <div class="tip">Where price is vs today's volume-weighted average price. Slightly above (0-0.7%) is good buying territory. Over 1.2% means stretched — that's chase territory where reversals happen. Works the same way below for shorts.</div>
         </div>
         <div class="metric">
-          <div class="metric-label">RSI</div>
-          <div class="metric-val ${rsiClass}">${metrics.rsi ? metrics.rsi.toFixed(0) : 'N/A'}</div>
-          <div class="tip">Measures how fast price is moving up vs down on a 0-100 scale. Above 70 means it's overheated and might pull back. Below 30 means it's been beaten up and might bounce. 50-60 is healthy upward momentum.</div>
-        </div>
-        <div class="metric">
-          <div class="metric-label">Vol</div>
+          <div class="metric-label">Volume</div>
           <div class="metric-val ${volClass}">${metrics.relVol.toFixed(1)}x</div>
-          <div class="tip">Today's volume compared to the 20-day average. Above 1.5x means serious participation — the move has conviction. Below 0.7x means nobody's really trading, so the price action doesn't mean much.</div>
+          <div class="tip">Today's volume vs 20-day average. Above 1.5x means real money is behind this move. Below 0.7x means the price action is unreliable — low volume moves get reversed easily.</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Vol Flow</div>
+          <div class="metric-val ${volTrendClass}">${metrics.volTrend != null ? (metrics.volTrend > 1 ? '▲ ' : '▼ ') + metrics.volTrend.toFixed(2) + 'x' : 'N/A'}</div>
+          <div class="tip">Are the last few 30-min bars getting more or less volume than the ones before? Rising = fresh money still coming in, the move has legs. Falling = buyers/sellers are done, you'd be the last one in.</div>
         </div>
         <div class="metric">
           <div class="metric-label">MACD</div>
-          <div class="metric-val ${macdClass}">${metrics.macdHist > 0 ? '+' : ''}${metrics.macdHist.toFixed(3)}</div>
-          <div class="tip">Tracks whether momentum is speeding up or slowing down. When the bar flips from negative to positive, it's a fresh push up. When it flips negative, momentum is fading. Size of the bar shows how strong the push is.</div>
+          <div class="metric-val ${macdClass}">${metrics.macdHist > 0 ? '+' : ''}${metrics.macdHist.toFixed(3)} ${metrics.macdHistRising ? '▲' : '▼'}</div>
+          <div class="tip">Momentum speed and direction. The number shows strength, the arrow shows if it's accelerating (▲) or decelerating (▼). Positive but slowing down is a red flag — the move looks strong but the engine is dying. That's where reversals start.</div>
         </div>
         <div class="metric">
-          <div class="metric-label">EMA 9/21</div>
-          <div class="metric-val ${emaClass}">${metrics.ema9 > metrics.ema21 ? '▲ Bull' : '▼ Bear'}</div>
-          <div class="tip">Compares the fast 9-day trend to the slower 21-day trend. When the fast one is above the slow one, the trend is up. A fresh crossover (just switched) is a stronger signal than one that's been in place for a while.</div>
+          <div class="metric-label">Range Left</div>
+          <div class="metric-val ${atrClass}">${metrics.atrUsedPct != null ? (100 - metrics.atrUsedPct).toFixed(0) + '%' : 'N/A'}</div>
+          <div class="tip">How much of the typical daily range is still available. Based on 14-day ATR (average true range). If only 10-20% is left, the day's move is statistically over — even if direction is right, there's nowhere left to go.</div>
         </div>
         <div class="metric">
-          <div class="metric-label">Range</div>
-          <div class="metric-val ${rangeClass}">${metrics.rangeExpansion.toFixed(1)}x</div>
-          <div class="tip">Today's price range compared to the 20-day average range. Above 1.3x means the market is making big moves — good for riding trends. Below 0.5x means it's dead/choppy — signals in low-range days are unreliable.</div>
+          <div class="metric-label">RSI</div>
+          <div class="metric-val ${rsiClass}">${rsiDisplay}</div>
+          <div class="tip">${metrics.intradayRsi ? 'Shows 30-min / daily RSI. ' : 'Daily RSI. '}Best entries are when both sit between 40-58 — momentum is building but not overheated. Above 65 on either means you're late. Above 75 means don't touch it. Below 30 means a potential bounce setup.</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Trend</div>
+          <div class="metric-val ${trendClass}">${trendLabel}</div>
+          <div class="tip">Combined read of EMA 9, EMA 21, SMA 20 direction, and their relative position. "Strong" means all four agree on direction. "Mixed" means the trend is unclear — signals in mixed trends are less reliable.</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Prev Day</div>
+          <div class="metric-val ${price > metrics.prevDayHigh ? 'bull' : price < metrics.prevDayLow ? 'bear' : 'neutral'}">${price > metrics.prevDayHigh ? '▲ Above High' : price < metrics.prevDayLow ? '▼ Below Low' : '— In Range'}</div>
+          <div class="tip">Whether price has broken above yesterday's high or below yesterday's low. These are levels that traders watch — breaking them with volume confirms a real move. Staying inside yesterday's range means no breakout yet.</div>
         </div>
       </div>`;
 
@@ -1249,15 +1410,40 @@ async function analyzeAndRender(sym, position) {
       getSectorSignal(sym)
     ]);
 
-    // Apply sector confirmation to score
+    // Apply sector confirmation as a core signal (weight 16 of 110)
     if (sectorData) {
+      const sectorW = 16;
       const confirms = (data.dayChange >= 0 && sectorData.change >= 0) || (data.dayChange < 0 && sectorData.change < 0);
-      if (!confirms && data.signal !== 'WAIT') {
-        // Sector disagrees — downgrade confidence
-        data.confidence = Math.max(25, data.confidence - 15);
-        data.signals.push({ text: `${sectorData.sym} not confirming — move might fade`, type: 'neutral' });
-      } else if (confirms && Math.abs(sectorData.change) > 0.5) {
-        data.confidence = Math.min(95, data.confidence + 5);
+      const sectorStrength = Math.abs(sectorData.change);
+
+      if (confirms && sectorStrength > 0.3) {
+        // Sector confirms direction
+        const boost = sectorStrength > 1.0 ? sectorW : sectorW * 0.6;
+        data.totalScore += (data.dayChange >= 0 ? boost : -boost);
+        data.signals.push({ text: `${sectorData.sym} confirms (${sectorData.change >= 0 ? '+' : ''}${sectorData.change.toFixed(2)}%) — broader market agrees`, type: data.dayChange >= 0 ? 'bull' : 'bear' });
+      } else if (!confirms && sectorStrength > 0.3) {
+        // Sector disagrees — this is a strong anti-signal
+        const penalty = sectorStrength > 1.0 ? sectorW : sectorW * 0.6;
+        data.totalScore += (data.dayChange >= 0 ? -penalty : penalty);
+        data.signals.push({ text: `${sectorData.sym} NOT confirming (${sectorData.change >= 0 ? '+' : ''}${sectorData.change.toFixed(2)}%) — fighting the broader market`, type: 'neutral' });
+      } else {
+        data.signals.push({ text: `${sectorData.sym} flat (${sectorData.change >= 0 ? '+' : ''}${sectorData.change.toFixed(2)}%) — no clear signal from the index`, type: 'neutral' });
+      }
+
+      // Recalculate final signal with sector score included
+      const fullMax = data.maxPossible + sectorW;
+      const newNorm = (data.totalScore / fullMax) * 100;
+      data.normalizedScore = newNorm;
+
+      if (newNorm > 18 && data.blockers.length === 0) {
+        data.signal = 'BUY';
+        data.confidence = Math.min(95, Math.round(30 + newNorm * 0.65));
+      } else if (newNorm < -18 && data.blockers.length === 0) {
+        data.signal = 'SELL';
+        data.confidence = Math.min(95, Math.round(30 + Math.abs(newNorm) * 0.65));
+      } else {
+        data.signal = 'WAIT';
+        data.confidence = Math.round(40 + Math.abs(newNorm) * 0.3);
       }
     }
 
