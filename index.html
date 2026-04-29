@@ -1088,17 +1088,19 @@ function enterPosition(watchSym) {
   const entryPrice = parseFloat(priceInput?.value);
   if (!ticker || isNaN(entryPrice) || entryPrice <= 0) return;
 
-  // Determine direction and leverage from SYMBOL_INFO
+  // Determine thesis and leverage from SYMBOL_INFO
+  // thesis = bull/bear view on the underlying (for exit signal logic)
+  // You always BUY shares, so stops always go below your price
   const info = SYMBOL_INFO[ticker];
   const isInverse = IS_INVERSE.has(ticker);
   const leverage = info?.leverage || 1;
-  const direction = isInverse ? 'short' : 'long';
+  const thesis = isInverse ? 'short' : 'long';
 
   const positions = getPositions();
   positions[watchSym] = {
     ticker,
     entryPrice,
-    direction,
+    thesis,
     leverage,
     timestamp: Date.now()
   };
@@ -1116,24 +1118,24 @@ function exitPosition(watchSym) {
 }
 
 function calcExitSignal(position, data, sectorData, tradedPrice) {
-  const { ticker, entryPrice, direction, leverage } = position;
+  const { ticker, entryPrice, leverage } = position;
+  // 'thesis' = bull/bear view on the underlying (for interpreting indicator signals)
+  // Support old saved positions that used 'direction'
+  const direction = position.thesis || position.direction;
   const { price, metrics } = data;
 
-  // Use the actual traded ticker's price for P&L, not the watched symbol's price
+  // Use the actual traded ticker's price for P&L
   const actualPrice = tradedPrice || price;
 
-  // P&L on the actual position
+  // P&L — you always BUY shares, so this is straightforward
   const positionMove = ((actualPrice - entryPrice) / entryPrice) * 100;
-  // Underlying move (watched symbol)
-  const underlyingMove = ((price - entryPrice) / entryPrice) * 100;
 
-  // Calculate trailing stop on the TRADED ticker's price
-  // Scale ATR by leverage to approximate the traded ticker's volatility
+  // Trailing stop always goes BELOW the traded price (you own shares, you lose if price drops)
   const scaledAtr = metrics.atr ? metrics.atr * leverage : null;
   const stopDistance = scaledAtr ? scaledAtr * 0.75 : null;
   let stopPrice = null;
   if (stopDistance) {
-    stopPrice = direction === 'long' ? actualPrice - stopDistance : actualPrice + stopDistance;
+    stopPrice = actualPrice - stopDistance;
   }
 
   // ── Exit signal logic ──
@@ -1431,7 +1433,7 @@ function renderCard(data, sectorData) {
           <div class="pos-header">
             <div style="display:flex;align-items:center;gap:8px;">
               <span class="pos-ticker-badge">${pos.ticker}</span>
-              <span class="pos-direction ${pos.direction}">${pos.direction}</span>
+              <span class="pos-direction ${pos.thesis || pos.direction}">${(pos.thesis || pos.direction) === 'long' ? 'LONG' : 'BEARISH'}</span>
               ${pos.leverage > 1 ? `<span class="pos-leverage-note">${pos.leverage}x</span>` : ''}
             </div>
             <button class="pos-btn pos-btn-exit" onclick="exitPosition('${sym}')">Close Position</button>
