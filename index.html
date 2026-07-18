@@ -681,6 +681,38 @@ function calcATR(highs, lows, closes, period = 14) {
   return atr;
 }
 
+// Wilder's ADX — trend STRENGTH regardless of direction.
+// Below ~18 = no real trend (chop/range). Above 25 = strong trend.
+function calcADX(highs, lows, closes, period = 14) {
+  if (highs.length < period * 2 + 2) return null;
+  const plusDM = [], minusDM = [], tr = [];
+  for (let i = 1; i < highs.length; i++) {
+    const up = highs[i] - highs[i - 1];
+    const dn = lows[i - 1] - lows[i];
+    plusDM.push(up > dn && up > 0 ? up : 0);
+    minusDM.push(dn > up && dn > 0 ? dn : 0);
+    tr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
+  }
+  // Wilder smoothing
+  let sTR = tr.slice(0, period).reduce((a, b) => a + b, 0);
+  let sP = plusDM.slice(0, period).reduce((a, b) => a + b, 0);
+  let sM = minusDM.slice(0, period).reduce((a, b) => a + b, 0);
+  const dxs = [];
+  for (let i = period; i < tr.length; i++) {
+    sTR = sTR - sTR / period + tr[i];
+    sP = sP - sP / period + plusDM[i];
+    sM = sM - sM / period + minusDM[i];
+    const pDI = sTR > 0 ? (sP / sTR) * 100 : 0;
+    const mDI = sTR > 0 ? (sM / sTR) * 100 : 0;
+    const dx = (pDI + mDI) > 0 ? Math.abs(pDI - mDI) / (pDI + mDI) * 100 : 0;
+    dxs.push(dx);
+  }
+  if (dxs.length < period) return null;
+  let adx = dxs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < dxs.length; i++) adx = (adx * (period - 1) + dxs[i]) / period;
+  return adx;
+}
+
 // Fraction of the regular trading session (9:30-4:00 ET) elapsed right now.
 // Returns 1 outside market hours (the latest daily bar is then complete).
 function sessionElapsedFraction() {
@@ -796,306 +828,194 @@ async function analyzeSymbol(sym) {
     }
   }
 
-  // ── SCORING (two-pass) ──
-  // Pass 1: DIRECTIONAL evidence — which way is this actually going?
-  //   VWAP (18), MACD (14), RSI extremes (10), Trend (10), Prev Day (8)
-  // Pass 2: CONVICTION modifiers applied to the complete directional score —
-  //   Volume (22) amplifies/dampens, ATR room (12) amplifies/dampens.
-  // This fixes order-dependence: modifiers see ALL the evidence, not a subtotal.
-  const signals = [];
-  const W = { volume: 22, vwap: 18, sector: 16, macd: 14, atr: 12, rsi: 10, trend: 10, prevDay: 8 };
-  // In-function max excludes sector (16), which is scored later in analyzeAndRender
-  const maxPossible = 22 + 18 + 14 + 12 + 10 + 10 + 8; // 94
+  // ═══════════════════════════════════════════════════════════
+  // LAYER 1 — TREND REGIME (slow, stable)
+  // Computed from COMPLETED daily bars only, so it cannot change
+  // during the trading day. Answers: uptrend, downtrend, or no-trend?
+  // ═══════════════════════════════════════════════════════════
 
-  let dirScore = 0;
+  // Completed bars: exclude today's in-progress daily bar if present
+  const nowEtDate = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toDateString();
+  const lastBarDate = new Date(daily.timestamp[daily.timestamp.length - 1] * 1000).toLocaleString('en-US', { timeZone: 'America/New_York' });
+  const lastIsToday = new Date(lastBarDate).toDateString() === nowEtDate;
+  const cCloses = lastIsToday ? dCloses.slice(0, -1) : dCloses;
+  const cHighs  = lastIsToday ? dHighs.slice(0, -1)  : dHighs;
+  const cLows   = lastIsToday ? dLows.slice(0, -1)   : dLows;
 
-  // ────────────────────────────────────────
-  // PASS 1.1 — VWAP POSITION (18)
-  // ────────────────────────────────────────
-  if (vwap != null) {
-    const absExt = Math.abs(priceVsVwap);
+  const tEma9 = calcEMA(cCloses, 9), tEma21 = calcEMA(cCloses, 21);
+  const tSma20 = calcSMA(cCloses, 20), tSma50 = cCloses.length >= 50 ? calcSMA(cCloses, 50) : null;
+  const tMacd = calcMACD(cCloses);
+  const adx = calcADX(cHighs, cLows, cCloses, 14);
+  const lastClose = cCloses[cCloses.length - 1];
 
-    if (absExt < 0.1) {
-      signals.push({ text: 'Sitting right at VWAP — no directional edge yet', type: 'neutral' });
-    } else if (priceVsVwap > 0) {
-      if (absExt < 0.3) {
-        dirScore += W.vwap * 0.5;
-        signals.push({ text: `Slightly above VWAP (${priceVsVwap.toFixed(2)}%) — buyers edging ahead`, type: 'bull' });
-      } else if (absExt <= 0.7) {
-        dirScore += W.vwap;
-        signals.push({ text: `Above VWAP by ${priceVsVwap.toFixed(2)}% — healthy buyers' zone`, type: 'bull' });
-      } else if (absExt <= 1.2) {
-        dirScore += W.vwap * 0.3;
-        signals.push({ text: `Extended above VWAP (${priceVsVwap.toFixed(2)}%) — getting stretched`, type: 'neutral' });
-      } else {
-        dirScore -= W.vwap * 0.5;
-        signals.push({ text: `Way above VWAP (${priceVsVwap.toFixed(2)}%) — chase territory, don't enter long here`, type: 'bear' });
-      }
-    } else {
-      if (absExt < 0.3) {
-        dirScore -= W.vwap * 0.5;
-        signals.push({ text: `Slightly below VWAP (${absExt.toFixed(2)}%) — sellers edging ahead`, type: 'bear' });
-      } else if (absExt <= 0.7) {
-        dirScore -= W.vwap;
-        signals.push({ text: `Below VWAP by ${absExt.toFixed(2)}% — sellers in control`, type: 'bear' });
-      } else if (absExt <= 1.2) {
-        dirScore -= W.vwap * 0.3;
-        signals.push({ text: `Extended below VWAP (${absExt.toFixed(2)}%) — getting stretched`, type: 'neutral' });
-      } else {
-        dirScore += W.vwap * 0.5;
-        signals.push({ text: `Way below VWAP (${absExt.toFixed(2)}%) — chase territory, don't enter short here`, type: 'bull' });
-      }
-    }
+  const trendReasons = [];
+  let trendScore = 0; // -100..+100
+
+  // EMA structure (±25)
+  const te9 = tEma9[tEma9.length-1], te21 = tEma21[tEma21.length-1];
+  const pe9 = tEma9[tEma9.length-2], pe21 = tEma21[tEma21.length-2];
+  let emaBull = 0;
+  if (te9 > te21) emaBull++;
+  if (te9 > pe9) emaBull++;
+  if (te21 > pe21) emaBull++;
+  trendScore += (emaBull - 1.5) / 1.5 * 25;
+  if (emaBull === 3) trendReasons.push({ text: 'Moving averages stacked bullish and rising', type: 'bull' });
+  else if (emaBull === 0) trendReasons.push({ text: 'Moving averages stacked bearish and falling', type: 'bear' });
+
+  // Price vs SMA20/50 (±20)
+  let maScore = 0;
+  if (lastClose > tSma20[tSma20.length-1]) maScore += 10; else maScore -= 10;
+  if (tSma50) { if (lastClose > tSma50[tSma50.length-1]) maScore += 10; else maScore -= 10; }
+  else maScore *= 2;
+  trendScore += maScore;
+  if (maScore >= 20) trendReasons.push({ text: 'Price above both the 20-day and 50-day averages', type: 'bull' });
+  else if (maScore <= -20) trendReasons.push({ text: 'Price below both the 20-day and 50-day averages', type: 'bear' });
+
+  // Market structure: higher highs / higher lows over last 10 days (±20)
+  let hh = 0, hl = 0, lh = 0, ll = 0;
+  for (let i = Math.max(1, cHighs.length - 10); i < cHighs.length; i++) {
+    if (cHighs[i] > cHighs[i-1]) hh++; else lh++;
+    if (cLows[i] > cLows[i-1]) hl++; else ll++;
+  }
+  const structNet = (hh + hl) - (lh + ll);
+  trendScore += Math.max(-20, Math.min(20, structNet * 2.5));
+  if (structNet >= 8) trendReasons.push({ text: 'Making higher highs and higher lows — classic uptrend structure', type: 'bull' });
+  else if (structNet <= -8) trendReasons.push({ text: 'Making lower highs and lower lows — classic downtrend structure', type: 'bear' });
+
+  // Daily MACD (±20)
+  if (tMacd.histogram > 0) trendScore += tMacd.histRising ? 20 : 10;
+  else if (tMacd.histogram < 0) trendScore += tMacd.histRising ? -20 : -10;
+  if (tMacd.histogram > 0 && tMacd.histRising) trendReasons.push({ text: 'Daily momentum positive and building', type: 'bull' });
+  else if (tMacd.histogram < 0 && tMacd.histRising) trendReasons.push({ text: 'Daily momentum negative and getting worse', type: 'bear' });
+
+  // 5-day rate of change (±15)
+  if (cCloses.length >= 6) {
+    const roc5 = ((lastClose - cCloses[cCloses.length-6]) / cCloses[cCloses.length-6]) * 100;
+    trendScore += Math.max(-15, Math.min(15, roc5 * 3));
+    if (roc5 > 2.5) trendReasons.push({ text: `Up ${roc5.toFixed(1)}% over the last 5 days`, type: 'bull' });
+    else if (roc5 < -2.5) trendReasons.push({ text: `Down ${Math.abs(roc5).toFixed(1)}% over the last 5 days`, type: 'bear' });
   }
 
-  // ────────────────────────────────────────
-  // PASS 1.2 — MACD MOMENTUM DIRECTION (14)
-  // ────────────────────────────────────────
-  const hist = macd.histogram;
-  const prevHist = macd.prevHistogram;
-  const histGrowing = macd.histRising;
+  trendScore = Math.max(-100, Math.min(100, trendScore));
 
-  if (hist > 0 && prevHist <= 0) {
-    dirScore += W.macd;
-    signals.push({ text: 'MACD just flipped bullish — fresh momentum starting', type: 'bull' });
-  } else if (hist < 0 && prevHist >= 0) {
-    dirScore -= W.macd;
-    signals.push({ text: 'MACD just flipped bearish — momentum reversing', type: 'bear' });
-  } else if (hist > 0 && histGrowing) {
-    dirScore += W.macd * 0.7;
-    signals.push({ text: 'MACD positive and accelerating — momentum building', type: 'bull' });
-  } else if (hist > 0 && !histGrowing) {
-    dirScore += W.macd * 0.1;
-    signals.push({ text: 'MACD positive but shrinking — momentum fading even though price is up', type: 'neutral' });
-  } else if (hist < 0 && histGrowing) {
-    dirScore -= W.macd * 0.7;
-    signals.push({ text: 'MACD negative and accelerating down — selling intensifying', type: 'bear' });
-  } else if (hist < 0 && !histGrowing) {
-    dirScore -= W.macd * 0.1;
-    signals.push({ text: 'MACD negative but improving — selling pressure easing', type: 'neutral' });
-  }
-
-  // ────────────────────────────────────────
-  // PASS 1.3 — RSI EXTREMES (10)
-  // Overbought/oversold are directional reversal evidence.
-  // Midrange RSI is NOT directional — it becomes a timing modifier in pass 2.
-  // ────────────────────────────────────────
-  const bestRsi = intradayRsi || dailyRsi;
-  let rsiTimingGood = false;
-
-  if (dailyRsi != null) {
-    if (dailyRsi >= 70) {
-      dirScore -= W.rsi * 0.5;
-      signals.push({ text: `Daily momentum overheated (RSI ${dailyRsi.toFixed(0)}) — pullback risk`, type: 'bear' });
-    } else if (dailyRsi <= 30) {
-      dirScore += W.rsi * 0.4;
-      signals.push({ text: `Daily momentum washed out (RSI ${dailyRsi.toFixed(0)}) — bounce zone`, type: 'bull' });
-    }
-  }
-
-  if (intradayRsi != null) {
-    if (intradayRsi >= 75) {
-      dirScore -= W.rsi * 0.5;
-      signals.push({ text: `30-min momentum maxed out (RSI ${intradayRsi.toFixed(0)}) — don't enter now`, type: 'bear' });
-    } else if (intradayRsi >= 65) {
-      dirScore -= W.rsi * 0.2;
-      signals.push({ text: `30-min momentum getting hot (RSI ${intradayRsi.toFixed(0)}) — late for entries`, type: 'neutral' });
-    } else if (intradayRsi <= 28) {
-      dirScore += W.rsi * 0.4;
-      signals.push({ text: `30-min momentum oversold (RSI ${intradayRsi.toFixed(0)}) — bounce setup`, type: 'bull' });
-    }
-    // Timing flag: both timeframes in the healthy entry zone
-    if (intradayRsi >= 40 && intradayRsi <= 60 && dailyRsi != null && dailyRsi >= 40 && dailyRsi <= 65) {
-      rsiTimingGood = true;
-    }
-  } else if (dailyRsi != null && dailyRsi >= 40 && dailyRsi <= 65) {
-    rsiTimingGood = true;
-  }
-
-  // ────────────────────────────────────────
-  // PASS 1.4 — TREND ALIGNMENT (10)
-  // ────────────────────────────────────────
-  const ema9Rising = curEma9 > prevEma9;
-  const ema21Rising = curEma21 > prevEma21;
-  const aboveSma20 = price > curSma20;
-  const ema9Above21 = curEma9 > curEma21;
-
-  let trendBull = 0;
-  if (ema9Rising) trendBull++;
-  if (ema21Rising) trendBull++;
-  if (aboveSma20) trendBull++;
-  if (ema9Above21) trendBull++;
-
-  if (trendBull >= 4) {
-    dirScore += W.trend;
-    signals.push({ text: 'Fully confirmed uptrend — fast & slow moving averages rising, price above all', type: 'bull' });
-  } else if (trendBull === 3) {
-    dirScore += W.trend * 0.5;
-    signals.push({ text: 'Mostly bullish trend — one minor disagreement', type: 'bull' });
-  } else if (trendBull <= 0) {
-    dirScore -= W.trend;
-    signals.push({ text: 'Fully confirmed downtrend — all moving averages bearish', type: 'bear' });
-  } else if (trendBull === 1) {
-    dirScore -= W.trend * 0.5;
-    signals.push({ text: 'Mostly bearish trend — one minor bright spot', type: 'bear' });
+  // ── Regime with hysteresis (persisted per symbol) ──
+  const regimes = JSON.parse(localStorage.getItem('ts_regimes') || '{}');
+  const prevRegime = regimes[sym]?.regime || 'RANGE';
+  let regime;
+  const adxOk = adx == null || adx >= 18;
+  const adxDead = adx != null && adx < 15;
+  if (prevRegime === 'UP') {
+    regime = (trendScore >= 15 && !adxDead) ? 'UP' : (trendScore <= -30 && adxOk ? 'DOWN' : 'RANGE');
+  } else if (prevRegime === 'DOWN') {
+    regime = (trendScore <= -15 && !adxDead) ? 'DOWN' : (trendScore >= 30 && adxOk ? 'UP' : 'RANGE');
   } else {
-    signals.push({ text: 'Trend is mixed — no clear direction from moving averages', type: 'neutral' });
+    regime = (trendScore >= 30 && adxOk) ? 'UP' : (trendScore <= -30 && adxOk) ? 'DOWN' : 'RANGE';
   }
-
-  // ────────────────────────────────────────
-  // PASS 1.5 — PREVIOUS DAY LEVELS (8)
-  // ────────────────────────────────────────
-  if (price > prevDayHigh) {
-    dirScore += W.prevDay;
-    signals.push({ text: `Broke above yesterday's high ($${prevDayHigh.toFixed(2)}) — structural breakout`, type: 'bull' });
-  } else if (price < prevDayLow) {
-    dirScore -= W.prevDay;
-    signals.push({ text: `Broke below yesterday's low ($${prevDayLow.toFixed(2)}) — structural breakdown`, type: 'bear' });
+  if (adx != null && adx < 15 && regime !== 'RANGE' && Math.abs(trendScore) < 45) {
+    regime = 'RANGE';
+    trendReasons.push({ text: `Trend strength very weak (ADX ${adx.toFixed(0)}) — market is drifting, not trending`, type: 'neutral' });
   }
-
-  // ════════════════════════════════════════
-  // PASS 2 — CONVICTION MODIFIERS
-  // Boosts add in the direction of the evidence; dampeners multiply at the
-  // END so weak volume / exhausted range discount EVERYTHING, including boosts.
-  // CRITICAL: boosts are scaled by evidence strength. Volume can only CONFIRM
-  // a direction that exists — it can never manufacture a signal on its own.
-  // ════════════════════════════════════════
-  const dirSign = dirScore >= 0 ? 1 : -1;
-  const dirLabel = dirScore >= 0 ? 'bull' : 'bear';
-  const boostScale = Math.min(1, Math.abs(dirScore) / 18); // full boosts need real evidence
-  let totalScore = dirScore;
-  let dampen = 1.0;
-
-  // 2.1 — VOLUME (22): strong volume CONFIRMS the direction;
-  // weak volume DAMPENS conviction. Weak volume never adds directional
-  // evidence — that was the old bug.
-  if (relVol >= 1.5) {
-    totalScore += dirSign * W.volume * 0.6 * boostScale;
-    signals.push({ text: `Volume ${relVol.toFixed(1)}x average pace — strong participation`, type: dirLabel });
-  } else if (relVol >= 1.0) {
-    totalScore += dirSign * W.volume * 0.25 * boostScale;
-  } else if (relVol < 0.6) {
-    dampen *= 0.6;
-    signals.push({ text: `Volume only ${relVol.toFixed(1)}x average pace — low conviction`, type: 'neutral' });
+  if (regimes[sym]?.regime !== regime) {
+    regimes[sym] = { regime, since: new Date().toISOString().slice(0, 10) };
+    localStorage.setItem('ts_regimes', JSON.stringify(regimes));
   }
+  const regimeSince = regimes[sym].since;
+  const trendStrength = Math.min(95, Math.round(Math.abs(trendScore) * 0.55 + (adx || 15) * 1.4));
 
-  if (volTrend != null) {
-    if (volTrend > 1.2) {
-      totalScore += dirSign * W.volume * 0.4 * boostScale;
-      signals.push({ text: `Volume building — last 3 bars ${volTrend.toFixed(1)}x the prior 3`, type: dirLabel });
-    } else if (volTrend < 0.6) {
-      dampen *= 0.7;
-      signals.push({ text: `Volume fading — participation drying up (${volTrend.toFixed(1)}x prior bars)`, type: 'neutral' });
-    }
-  }
+  // ═══════════════════════════════════════════════════════════
+  // LAYER 2 — ENTRY TIMING (fast, within the regime)
+  // Never contradicts the trend. Only answers: is NOW a good entry?
+  // ═══════════════════════════════════════════════════════════
+  const entryReasons = [];
+  let entryState = 'STAND_ASIDE'; // ENTER | WAIT_LATE | WAIT_EXTENDED | WAIT_PULLBACK | WAIT_VOLUME | WAIT_HOT | STAND_ASIDE | BREAKOUT_WATCH
+  let entryText = '';
+  let entryTarget = null;
+  let entryQuality = 0;
 
-  // 2.2 — ATR ROOM (12): room to run confirms; exhausted range dampens.
-  if (atrUsedPct != null) {
-    if (atrUsedPct < 40) {
-      totalScore += dirSign * W.atr * 0.7 * boostScale;
-      signals.push({ text: `Only ${atrUsedPct.toFixed(0)}% of typical daily range used — plenty of room to move`, type: dirLabel });
-    } else if (atrUsedPct < 70) {
-      totalScore += dirSign * W.atr * 0.3 * boostScale;
-    } else if (atrUsedPct < 90) {
-      signals.push({ text: `${atrUsedPct.toFixed(0)}% of daily range used up — move is mostly done`, type: 'neutral' });
+  const dirUp = regime === 'UP';
+  const dirDn = regime === 'DOWN';
+  // Extension relative to the trade direction: positive = stretched in-direction
+  const ext = dirUp ? priceVsVwap : dirDn ? -priceVsVwap : Math.abs(priceVsVwap);
+  const iRsiHot = intradayRsi != null && (dirUp ? intradayRsi >= 68 : intradayRsi <= 32);
+
+  // Breakout override: RANGE regime but today is a monster move with volume —
+  // flag it instead of blindly saying "no trend" all day.
+  const bigMove = atr && Math.abs(price - prevClose) > 1.2 * atr && relVol > 1.3;
+
+  if (regime === 'RANGE') {
+    if (bigMove) {
+      entryState = 'BREAKOUT_WATCH';
+      const brDir = price > prevClose ? 'upside' : 'downside';
+      entryText = `Big ${brDir} move on strong volume today — possible breakout from the range. Early entries are higher-risk; the trend flips officially if this holds into tomorrow.`;
+      entryQuality = 40;
     } else {
-      dampen *= 0.7;
-      signals.push({ text: `${Math.min(atrUsedPct, 200).toFixed(0)}% of typical daily range consumed — statistically running on fumes`, type: 'neutral' });
+      entryState = 'STAND_ASIDE';
+      const upLevel = tSma20[tSma20.length-1];
+      entryText = `No established trend — this is the chop that eats accounts. Wait for a daily close ${lastClose < upLevel ? 'above' : 'beyond'} $${upLevel.toFixed(2)} (20-day average) with volume before trading it.`;
+      entryQuality = 10;
     }
-  }
-
-  // 2.3 — RSI TIMING (part of the 10): both timeframes in the entry zone
-  // is a timing bonus in whatever direction the evidence points.
-  if (rsiTimingGood && Math.abs(totalScore) > 10) {
-    totalScore += dirSign * W.rsi * 0.3 * boostScale;
-    signals.push({ text: `Momentum in the healthy entry zone (RSI ${intradayRsi ? intradayRsi.toFixed(0) + '/' : ''}${dailyRsi.toFixed(0)}) — not chasing an extreme`, type: dirLabel });
-  }
-
-  // Apply all dampening LAST so it discounts boosts too
-  totalScore *= dampen;
-
-  // ════════════════════════════════════════
-  // GUARDRAILS — hard blocks for bad entries
-  // ════════════════════════════════════════
-  let blockers = [];
-
-  // Evidence floor: never trade on conviction modifiers alone. The directional
-  // indicators themselves must show a real signal before anything else counts.
-  if (Math.abs(dirScore) < 12) {
-    blockers.push('Not enough directional evidence — the core indicators don\'t agree on a direction yet.');
-  }
-
-  // Anti-chase: never ENTER when price is far extended from VWAP in the trade
-  // direction, even if everything else is green. This is the trap.
-  if (vwap != null && Math.abs(priceVsVwap) > 1.3 && Math.sign(priceVsVwap) === dirSign) {
-    blockers.push(`Price is ${Math.abs(priceVsVwap).toFixed(1)}% extended from VWAP in the trade direction. Entering here is chasing — wait for a pullback toward VWAP.`);
-  }
-
-  // Dead zone: low range + low volume
-  if (atrUsedPct != null && atrUsedPct < 30 && relVol < 0.7) {
-    blockers.push('Dead zone — tiny range on light volume. Nothing to trade here.');
-    totalScore *= 0.3;
-  }
-
-  // No-real-move (backtested chop filter): a signal firing while the stock has
-  // barely moved on the day AND volume is below average is the classic chop
-  // fakeout — mean-reversion noise that looks like a setup. In backtests this
-  // cut losing chop trades by ~2/3 with no cost to trend trades.
-  if (Math.abs(dayChangePct) < 0.25 && relVol < 1.0) {
-    blockers.push(`Stock has barely moved today (${dayChangePct >= 0 ? '+' : ''}${dayChangePct.toFixed(2)}%) on below-average volume — this pattern is usually chop, not a real move.`);
-  }
-
-  // Exhaustion spike: overbought RSI + far from VWAP + range mostly consumed
-  if ((bestRsi && bestRsi > 75) && Math.abs(priceVsVwap) > 1.0 && atrUsedPct > 80) {
-    blockers.push('Exhaustion spike — momentum maxed, price stretched, range used up. This is where reversals happen.');
-    totalScore *= 0.2;
-  }
-
-  // Chase trap: volume fading + extended from VWAP (the exact pattern that burns you)
-  if (volTrend != null && volTrend < 0.65 && Math.abs(priceVsVwap) > 0.7) {
-    blockers.push('Volume drying up while price is extended from VWAP. The move is over — entering now is chasing.');
-    totalScore *= 0.3;
-  }
-
-  // Range exhaustion: already used 90%+ of daily range
-  if (atrUsedPct != null && atrUsedPct > 90 && Math.abs(totalScore) > 15) {
-    blockers.push(`Today's range is ${atrUsedPct.toFixed(0)}% consumed. Even if direction is right, there's no room left.`);
-    totalScore *= 0.4;
-  }
-
-  // Low conviction: no clear direction + weak volume
-  if (Math.abs(totalScore) < 12 && relVol < 0.7) {
-    blockers.push('No clear direction with weak volume. Stay out.');
-  }
-
-  // ── FINAL SIGNAL ──
-  const normalizedScore = (totalScore / maxPossible) * 100;
-  let signal, confidence;
-
-  if (normalizedScore > 18 && blockers.length === 0) {
-    signal = 'BUY';
-    confidence = Math.min(95, Math.round(30 + normalizedScore * 0.65));
-  } else if (normalizedScore < -18 && blockers.length === 0) {
-    signal = 'SELL';
-    confidence = Math.min(95, Math.round(30 + Math.abs(normalizedScore) * 0.65));
   } else {
-    signal = 'WAIT';
-    confidence = Math.round(40 + Math.abs(normalizedScore) * 0.3);
+    // Within a trend: grade the entry
+    entryQuality = 100;
+    const vwapStr = vwap ? `$${vwap.toFixed(2)}` : 'VWAP';
+
+    if (atrUsedPct != null && atrUsedPct >= 85) {
+      entryState = 'WAIT_LATE';
+      entryText = `Today's move is spent (${Math.min(atrUsedPct,199).toFixed(0)}% of typical range used). Wait for tomorrow's setup rather than buying the leftovers.`;
+      entryQuality = 20;
+    } else if (ext > 0.9) {
+      entryState = 'WAIT_EXTENDED';
+      entryText = `Price is stretched ${Math.abs(priceVsVwap).toFixed(1)}% ${dirUp ? 'above' : 'below'} VWAP — entering here is chasing. A pullback toward ${vwapStr} is the entry.`;
+      entryTarget = vwap;
+      entryQuality = 35;
+    } else if (ext < -0.5) {
+      entryState = 'WAIT_PULLBACK';
+      entryText = `Deep pullback in progress (${Math.abs(priceVsVwap).toFixed(1)}% ${dirUp ? 'below' : 'above'} VWAP). Don't catch the knife — wait for price to reclaim ${vwapStr}.`;
+      entryTarget = vwap;
+      entryQuality = 30;
+    } else if (relVol < 0.85) {
+      entryState = 'WAIT_VOLUME';
+      entryText = `Trend is intact but today's volume is only ${relVol.toFixed(1)}x normal pace — moves without participation fade. Wait for volume to show up.`;
+      entryQuality = 40;
+    } else if (iRsiHot) {
+      entryState = 'WAIT_HOT';
+      entryText = `Short-term momentum is maxed (30-min RSI ${intradayRsi.toFixed(0)}). Let it cool for a bar or two — entries here usually get a better price within the hour.`;
+      entryQuality = 45;
+    } else {
+      entryState = 'ENTER';
+      entryQuality = 75;
+      if (ext >= -0.2 && ext <= 0.6) entryQuality += 10;
+      if (volTrend != null && volTrend > 1.15) { entryQuality += 10; entryReasons.push({ text: 'Volume building bar over bar — fresh participation', type: dirUp ? 'bull' : 'bear' }); }
+      if (relVol >= 1.3) entryQuality += 5;
+      entryQuality = Math.min(95, entryQuality);
+      entryText = `Price is near VWAP with the trend at your back — this is the entry zone. ${dirUp ? 'Buy the bull side' : 'Buy the inverse/bear side'} with a stop ${(0.75 * (atr||0)).toFixed(2) !== '0.00' ? `about $${(0.75*atr).toFixed(2)} away` : 'below recent support'}.`;
+    }
+
+    // Entry context reasons
+    if (Math.abs(priceVsVwap) <= 0.9 && vwap) entryReasons.push({ text: `Price within ${Math.abs(priceVsVwap).toFixed(1)}% of VWAP ($${vwap.toFixed(2)})`, type: 'neutral' });
+    if (atrUsedPct != null && atrUsedPct < 60) entryReasons.push({ text: `${Math.max(0,100-atrUsedPct).toFixed(0)}% of the typical daily range still available`, type: dirUp ? 'bull' : 'bear' });
+    if (price > prevDayHigh && dirUp) entryReasons.push({ text: `Broke above yesterday's high ($${prevDayHigh.toFixed(2)})`, type: 'bull' });
+    if (price < prevDayLow && dirDn) entryReasons.push({ text: `Broke below yesterday's low ($${prevDayLow.toFixed(2)})`, type: 'bear' });
   }
 
   const isInverse = IS_INVERSE.has(sym);
 
+  // trendBull retained for metric tile compatibility
+  const trendBull = emaBull + (lastClose > tSma20[tSma20.length-1] ? 1 : 0);
+
   return {
-    sym, price, dayChange, dayChangePct, dayHigh, dayLow,
-    signal, confidence, signals, blockers, isInverse,
-    totalScore, maxPossible, normalizedScore,
+    sym, price, dayChange, dayChangePct, dayHigh, dayLow, isInverse,
+    regime, regimeSince, trendScore, trendStrength, adx,
+    entryState, entryText, entryTarget, entryQuality,
+    trendReasons, entryReasons,
+    blockers: [],
     metrics: {
       vwap, priceVsVwap,
       relVol, volTrend,
       dailyRsi, intradayRsi,
-      macdHist: macd.histogram, macdHistRising: histGrowing,
+      macdHist: tMacd.histogram, macdHistRising: tMacd.histRising,
       atrUsedPct, atr, todayRange,
-      trendBull, ema9: curEma9, ema21: curEma21, sma20: curSma20,
+      trendBull, ema9: te9, ema21: te21, sma20: tSma20[tSma20.length-1],
       prevDayHigh, prevDayLow
     }
   };
@@ -1232,7 +1152,18 @@ function calcExitSignal(position, data, sectorData, tradedPrice) {
     exitReasons.push(`${metrics.atrUsedPct.toFixed(0)}% of daily range used — nowhere left to go today`);
   }
 
-  // 6. Sector divergence
+  // 6. Trend regime flipped against the position — strongest exit signal
+  if (data.regime) {
+    if ((direction === 'long' && data.regime === 'DOWN') || (direction === 'short' && data.regime === 'UP')) {
+      exitScore += 40;
+      exitReasons.push('The trend itself has flipped against your position — this is no longer a pullback, it\'s a reversal');
+    } else if (data.regime === 'RANGE') {
+      exitScore += 12;
+      exitReasons.push('Trend has faded into a range — the reason for the trade is gone');
+    }
+  }
+
+  // 7. Sector divergence
   if (sectorData) {
     const sectorAgainst = (direction === 'long' && sectorData.change < -0.3) || (direction === 'short' && sectorData.change > 0.3);
     if (sectorAgainst) {
@@ -1293,25 +1224,33 @@ function calcExitSignal(position, data, sectorData, tradedPrice) {
 // ═══════════════════════════════════════════════════════════════
 
 function renderCard(data, sectorData) {
-  const { sym, price, dayChange, dayChangePct, signal, confidence, signals, blockers, metrics, isInverse } = data;
-  const sig = signal.toLowerCase();
+  const { sym, price, dayChange, dayChangePct, regime, regimeSince, trendStrength, adx,
+          entryState, entryText, entryQuality, trendReasons, entryReasons, metrics, isInverse } = data;
+  // Card accent + badge derive from the REGIME (stable), not intraday state
+  const sig = regime === 'UP' ? 'buy' : regime === 'DOWN' ? 'sell' : 'wait';
   const changeClass = dayChange >= 0 ? 'up' : 'down';
   const changeSign = dayChange >= 0 ? '+' : '';
 
-  // Pick top reasons (strongest signals only)
-  const topReasons = signals
-    .filter(s => s.type !== 'neutral')
-    .slice(0, 5);
-  const neutralReasons = signals.filter(s => s.type === 'neutral').slice(0, 2);
-
-  // Display signal — for inverse ETFs, note the relationship
-  let signalLabel = signal;
-  let signalNote = '';
-  if (isInverse && signal === 'BUY') {
-    signalNote = '(Bearish setup — this is an inverse ETF)';
-  } else if (isInverse && signal === 'SELL') {
-    signalNote = '(Bullish setup — inverse ETF goes down)';
+  const regimeLabel = regime === 'UP' ? 'UPTREND' : regime === 'DOWN' ? 'DOWNTREND' : 'NO TREND';
+  // Days in regime
+  let sinceTxt = '';
+  if (regimeSince) {
+    const days = Math.max(0, Math.round((Date.now() - new Date(regimeSince + 'T12:00:00')) / 86400000));
+    sinceTxt = days === 0 ? 'new today' : `${days} day${days === 1 ? '' : 's'}`;
   }
+
+  const entryBadges = {
+    ENTER:          { label: regime === 'UP' ? 'BUY ZONE' : 'ENTER (INVERSE)', cls: sig },
+    WAIT_EXTENDED:  { label: 'WAIT — EXTENDED', cls: 'wait' },
+    WAIT_PULLBACK:  { label: 'WAIT — PULLBACK', cls: 'wait' },
+    WAIT_VOLUME:    { label: 'WAIT — VOLUME', cls: 'wait' },
+    WAIT_HOT:       { label: 'WAIT — OVERHEATED', cls: 'wait' },
+    WAIT_LATE:      { label: 'TOO LATE TODAY', cls: 'wait' },
+    WAIT_SECTOR:    { label: 'WAIT — INDEX', cls: 'wait' },
+    STAND_ASIDE:    { label: 'STAY OUT', cls: 'wait' },
+    BREAKOUT_WATCH: { label: 'BREAKOUT WATCH', cls: 'wait' },
+  };
+  const eb = entryBadges[entryState] || entryBadges.STAND_ASIDE;
 
   let html = `
     <div class="card ${sig}" id="card-${sym}" draggable="true">
@@ -1339,12 +1278,8 @@ function renderCard(data, sectorData) {
     html += `<div class="sym-info-tags">`;
     html += `<span class="sym-tag ${info.type}">${typeLabels[info.type]}</span>`;
     html += `<span class="sym-tag sector">${info.sector}</span>`;
-    if (info.leverage > 1) {
-      html += `<span class="sym-tag leverage">${info.leverage}x Leverage</span>`;
-    }
-    if (info.type === 'ietf') {
-      html += `<span class="sym-tag direction-bear">Inverse</span>`;
-    }
+    if (info.leverage > 1) html += `<span class="sym-tag leverage">${info.leverage}x Leverage</span>`;
+    if (info.type === 'ietf') html += `<span class="sym-tag direction-bear">Inverse</span>`;
     html += `</div>`;
     html += `<div class="sym-info-desc">${info.desc}</div>`;
     if (info.underlying) {
@@ -1355,29 +1290,44 @@ function renderCard(data, sectorData) {
     html += `</div>`;
   }
 
+  // ── Trend regime row (slow layer) ──
   html += `
       <div class="signal-row">
-        <div class="signal-badge ${sig}">${signalLabel}</div>
-        <div class="confidence"><strong>${confidence}%</strong> confidence ${signalNote}</div>
+        <div class="signal-badge ${sig}">${regimeLabel}</div>
+        <div class="confidence"><strong>${trendStrength}%</strong> trend strength${sinceTxt ? ` · <span style="color:var(--text3)">${sinceTxt}</span>` : ''}${adx != null ? ` · <span style="color:var(--text3)">ADX ${adx.toFixed(0)}</span>` : ''}</div>
       </div>`;
 
-  // Blockers
-  if (blockers.length > 0) {
-    blockers.forEach(b => {
-      html += `<div class="blocker"><span class="blocker-icon">⚠</span>${b}</div>`;
-    });
+  // ── Entry timing row (fast layer) ──
+  html += `
+      <div class="signal-row" style="padding-top:0;">
+        <div class="signal-badge ${eb.cls}" style="font-size:0.78rem;padding:5px 14px;">${eb.label}</div>
+        <div class="confidence" style="font-size:0.78rem;">entry quality <strong>${entryQuality}%</strong>${data._pendingState ? ' · <span style="color:var(--text3)">shifting…</span>' : ''}</div>
+      </div>`;
+
+  // Entry guidance text
+  if (entryText) {
+    const gClass = entryState === 'ENTER' ? (sig === 'buy' ? 'hold' : 'hold') : entryState === 'BREAKOUT_WATCH' ? 'caution' : 'caution';
+    html += `<div class="exit-signal ${entryState === 'ENTER' ? 'hold' : 'caution'}" style="margin-top:0;">
+      <span class="exit-icon">${entryState === 'ENTER' ? '✓' : entryState === 'BREAKOUT_WATCH' ? '⚡' : 'ℹ'}</span>
+      <div>${entryText}</div>
+    </div>`;
   }
 
-  // Reasons
+  // Reasons: trend evidence + entry timing
   html += `<div class="reasons">`;
-  topReasons.forEach(r => {
-    const iconClass = r.type === 'bull' ? 'bull' : 'bear';
-    const icon = r.type === 'bull' ? '▲' : '▼';
-    html += `<div class="reason"><span class="reason-icon ${iconClass}">${icon}</span>${r.text}</div>`;
+  const tR = trendReasons.filter(r => r.type !== 'neutral').slice(0, 3).concat(trendReasons.filter(r => r.type === 'neutral').slice(0, 1));
+  const eR = entryReasons.slice(0, 3);
+  tR.forEach(r => {
+    const ic = r.type === 'bull' ? '▲' : r.type === 'bear' ? '▼' : '●';
+    html += `<div class="reason"><span class="reason-icon ${r.type}">${ic}</span>${r.text}</div>`;
   });
-  neutralReasons.forEach(r => {
-    html += `<div class="reason"><span class="reason-icon neutral">●</span>${r.text}</div>`;
-  });
+  if (eR.length) {
+    html += `<div class="reason" style="margin-top:4px;color:var(--text3);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">Entry timing</div>`;
+    eR.forEach(r => {
+      const ic = r.type === 'bull' ? '▲' : r.type === 'bear' ? '▼' : '●';
+      html += `<div class="reason"><span class="reason-icon ${r.type}">${ic}</span>${r.text}</div>`;
+    });
+  }
   html += `</div>`;
 
   // Metrics — new indicator set
@@ -1508,23 +1458,16 @@ function renderCard(data, sectorData) {
     }
   } else {
     // No position — show entry form
-    // Default ticker suggestion based on signal
+    // Default ticker suggestion based on trend regime
     let suggestedTicker = sym;
-    const sInfo = SYMBOL_INFO[sym];
-    // For index/sector ETFs, suggest the leveraged version
-    if (signal === 'BUY' || signal === 'SELL') {
-      // Find leveraged tickers that reference this symbol
+    if (regime === 'UP' || regime === 'DOWN') {
       const leveragedOptions = Object.entries(SYMBOL_INFO).filter(([t, info]) =>
         info.underlying === sym && info.leverage > 1
       );
       if (leveragedOptions.length > 0) {
-        if (signal === 'BUY') {
-          const bull = leveragedOptions.find(([t, info]) => info.direction === 'bull');
-          if (bull) suggestedTicker = bull[0];
-        } else {
-          const bear = leveragedOptions.find(([t, info]) => info.direction === 'bear');
-          if (bear) suggestedTicker = bear[0];
-        }
+        const want = regime === 'UP' ? 'bull' : 'bear';
+        const pick = leveragedOptions.find(([t, info]) => info.direction === want);
+        if (pick) suggestedTicker = pick[0];
       }
     }
 
@@ -1757,51 +1700,54 @@ async function analyzeAndRender(sym, position) {
       getSectorSignal(sym)
     ]);
 
-    // Apply sector confirmation as a core signal (weight 16; full max = 94 + 16 = 110)
+    // Sector check — affects ENTRY quality only, never the trend regime.
+    // For inverse ETFs the supporting direction flips (DUST up wants GLD down).
     if (sectorData) {
-      const sectorW = 16;
-      // Align with the EVIDENCE direction (sign of totalScore), not the day's
-      // price change — on an intraday reversal those differ, and the trade
-      // direction is what the evidence says, not where the day opened.
-      const evidenceSign = data.totalScore >= 0 ? 1 : -1;
-      // For inverse ETFs the supporting sector direction is flipped:
-      // bullish evidence on DUST is supported by GLD going DOWN.
       const inverse = IS_INVERSE.has(sym);
-      const effSectorChange = inverse ? -sectorData.change : sectorData.change;
-      const sectorStrength = Math.abs(sectorData.change);
-      const supports = evidenceSign * effSectorChange > 0;
-
-      if (sectorStrength > 0.3 && supports) {
-        const boost = sectorStrength > 1.0 ? sectorW : sectorW * 0.6;
-        data.totalScore += evidenceSign * boost;
-        data.signals.push({ text: `${sectorData.sym} confirms${inverse ? ' (inverse relationship)' : ''} (${sectorData.change >= 0 ? '+' : ''}${sectorData.change.toFixed(2)}%) — broader market agrees`, type: evidenceSign > 0 ? 'bull' : 'bear' });
-      } else if (sectorStrength > 0.3 && !supports) {
-        const penalty = sectorStrength > 1.0 ? sectorW : sectorW * 0.6;
-        data.totalScore -= evidenceSign * penalty;
-        data.signals.push({ text: `${sectorData.sym} NOT confirming${inverse ? ' (inverse relationship)' : ''} (${sectorData.change >= 0 ? '+' : ''}${sectorData.change.toFixed(2)}%) — fighting the broader market`, type: 'neutral' });
-      } else {
-        data.signals.push({ text: `${sectorData.sym} flat (${sectorData.change >= 0 ? '+' : ''}${sectorData.change.toFixed(2)}%) — no clear signal from the index`, type: 'neutral' });
+      const effChange = inverse ? -sectorData.change : sectorData.change;
+      const tradeSign = data.regime === 'UP' ? 1 : data.regime === 'DOWN' ? -1 : 0;
+      const strength = Math.abs(sectorData.change);
+      let supports = null;
+      if (tradeSign !== 0 && strength > 0.3) {
+        supports = tradeSign * effChange > 0;
+        if (supports) {
+          data.entryReasons.push({ text: `${sectorData.sym} moving with the trend (${sectorData.change >= 0 ? '+' : ''}${sectorData.change.toFixed(2)}%)${inverse ? ' — inverse relationship' : ''}`, type: tradeSign > 0 ? 'bull' : 'bear' });
+          data.entryQuality = Math.min(95, data.entryQuality + 5);
+        } else {
+          data.entryReasons.push({ text: `${sectorData.sym} moving AGAINST the trade today (${sectorData.change >= 0 ? '+' : ''}${sectorData.change.toFixed(2)}%)${inverse ? ' — inverse relationship' : ''} — entries fade when the index disagrees`, type: 'neutral' });
+          data.entryQuality = Math.max(15, data.entryQuality - 25);
+          if (data.entryState === 'ENTER') {
+            data.entryState = 'WAIT_SECTOR';
+            data.entryText = `Setup looks fine on ${sym} itself, but ${sectorData.sym} is moving against it today. Wait for the index to turn — solo moves against the reference usually fade.`;
+          }
+        }
       }
-
-      // Stash for the card's reference line so display matches scoring
-      data._sectorSupports = sectorStrength > 0.3 ? supports : null;
-
-      // Recalculate final signal with sector score included
-      const fullMax = data.maxPossible + sectorW; // 94 + 16 = 110
-      const newNorm = (data.totalScore / fullMax) * 100;
-      data.normalizedScore = newNorm;
-
-      if (newNorm > 18 && data.blockers.length === 0) {
-        data.signal = 'BUY';
-        data.confidence = Math.min(95, Math.round(30 + newNorm * 0.65));
-      } else if (newNorm < -18 && data.blockers.length === 0) {
-        data.signal = 'SELL';
-        data.confidence = Math.min(95, Math.round(30 + Math.abs(newNorm) * 0.65));
-      } else {
-        data.signal = 'WAIT';
-        data.confidence = Math.round(40 + Math.abs(newNorm) * 0.3);
-      }
+      data._sectorSupports = supports;
     }
+
+    // ── Entry-state debounce: a change must persist across 2 evaluations ──
+    // This stops the card from twitching between states on every refresh.
+    try {
+      const deb = JSON.parse(localStorage.getItem('ts_entry_debounce') || '{}');
+      const d = deb[sym];
+      const freshState = data.entryState;
+      if (freshState === 'BREAKOUT_WATCH' || freshState === 'STAND_ASIDE' || !d || d.shown === freshState) {
+        deb[sym] = { shown: freshState, pending: null, count: 0 };
+      } else if (d.pending === freshState) {
+        if (d.count + 1 >= 2) {
+          deb[sym] = { shown: freshState, pending: null, count: 0 };
+        } else {
+          deb[sym] = { shown: d.shown, pending: freshState, count: d.count + 1 };
+          data._pendingState = freshState;
+          data.entryState = d.shown;
+        }
+      } else {
+        deb[sym] = { shown: d.shown, pending: freshState, count: 1 };
+        data._pendingState = freshState;
+        data.entryState = d.shown;
+      }
+      localStorage.setItem('ts_entry_debounce', JSON.stringify(deb));
+    } catch(e) {}
 
     // If there's an active position with a different ticker, fetch its current price
     const positions = getPositions();
@@ -1906,4 +1852,4 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 </body>
-  </html>
+      </html>
