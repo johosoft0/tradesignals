@@ -241,6 +241,7 @@ body{min-height:100vh;padding:20px 16px 60px;}
   <div class="header-right">
     <div class="status-dot" id="statusDot" title="Connection status"></div>
     <input type="password" class="api-input" id="apiKey" placeholder="Finnhub API key" autocomplete="off">
+    <input type="url" class="api-input" id="proxyUrl" placeholder="Your proxy URL (Cloudflare Worker, optional)" autocomplete="off" style="margin-top:8px">
   </div>
 </div>
 
@@ -423,13 +424,19 @@ const SYMBOL_INFO = {
 
 let watchlist = JSON.parse(localStorage.getItem('ts_watchlist') || '[]');
 let finnhubKey = localStorage.getItem('ts_finnhub') || '';
+// Optional self-hosted proxy (see worker.js). Called as `${customProxy}/?url=<encoded yahoo url>`
+let customProxy = localStorage.getItem('ts_proxy') || '';
+let lastProxyError = '';
 
 // ═══════════════════════════════════════════════════════════════
 // CORS PROXY CHAIN for Yahoo Finance
 // Uses both query1 and query2 Yahoo domains, races multiple proxies
 // ═══════════════════════════════════════════════════════════════
 const CORS_PROXIES = [
+  url => customProxy ? `${customProxy}/?url=${encodeURIComponent(url)}` : null,
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://yacdn.org/proxy/${url}`,
+  url => `https://corsproxy.org/?${encodeURIComponent(url)}`,
   url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
   url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
   url => `https://api.cors.lol/?url=${encodeURIComponent(url)}`,
@@ -506,8 +513,9 @@ async function yahooFetch(url) {
 
 async function tryProxy(pi, url) {
   const fetchUrl = pi === -1 ? url : CORS_PROXIES[pi](url);
+  if (!fetchUrl) throw new Error('proxy not configured');
   const r = await fetch(fetchUrl, { signal: AbortSignal.timeout(10000) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) { lastProxyError = `HTTP ${r.status}`; throw new Error(`HTTP ${r.status}`); }
   const text = await r.text();
   // Some proxies wrap response in JSON (allorigins /get endpoint, htmldriven, etc.)
   let data = text;
@@ -750,7 +758,8 @@ async function analyzeSymbol(sym) {
   ]);
 
   if (!daily || !daily.timestamp || daily.timestamp.length < 21) {
-    throw new Error('Not enough data — check the symbol');
+    throw new Error(daily ? 'Not enough data — check the symbol'
+      : `Price data unavailable (all CORS proxies failed${lastProxyError ? ', last: ' + lastProxyError : ''}) — set your own proxy URL`);
   }
 
   const dq = daily.indicators.quote[0];
@@ -1818,6 +1827,14 @@ document.getElementById('grid').addEventListener('mouseenter', function(e) {
     tip.classList.add('align-left');
   }
 }, true);
+
+const proxyInput = document.getElementById('proxyUrl');
+proxyInput.value = customProxy;
+proxyInput.addEventListener('change', () => {
+  customProxy = proxyInput.value.trim().replace(/\/+$/, '');
+  localStorage.setItem('ts_proxy', customProxy);
+  lastWorkingProxy = -1;
+});
 
 const apiInput = document.getElementById('apiKey');
 apiInput.value = finnhubKey;
